@@ -1,0 +1,4 @@
+*.o
+jsb
+tests/test_server
+deps/

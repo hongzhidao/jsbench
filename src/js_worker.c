@@ -159,6 +159,16 @@ static void worker_js_path(js_worker_t *w) {
     JSRuntime *rt = js_vm_rt_create();
     JSContext *ctx = js_vm_ctx_create(rt);
 
+    /* Create event loop for fetch() */
+    js_loop_t *loop = js_loop_create();
+    if (!loop) {
+        fprintf(stderr, "Worker %d: failed to create event loop\n", w->id);
+        JS_FreeContext(ctx);
+        JS_FreeRuntime(rt);
+        return;
+    }
+    JS_SetContextOpaque(ctx, loop);
+
     /* Re-evaluate the script to get the async function */
     JSValue default_export = JS_UNDEFINED;
     JSValue bench_export = JS_UNDEFINED;
@@ -166,6 +176,8 @@ static void worker_js_path(js_worker_t *w) {
     if (js_vm_eval_module(ctx, cfg->script_path, cfg->script_source,
                            &default_export, &bench_export) != 0) {
         fprintf(stderr, "Worker %d: failed to evaluate script\n", w->id);
+        JS_SetContextOpaque(ctx, NULL);
+        js_loop_free(loop);
         JS_FreeContext(ctx);
         JS_FreeRuntime(rt);
         return;
@@ -175,6 +187,8 @@ static void worker_js_path(js_worker_t *w) {
         fprintf(stderr, "Worker %d: default export is not a function\n", w->id);
         JS_FreeValue(ctx, default_export);
         JS_FreeValue(ctx, bench_export);
+        JS_SetContextOpaque(ctx, NULL);
+        js_loop_free(loop);
         JS_FreeContext(ctx);
         JS_FreeRuntime(rt);
         return;
@@ -202,10 +216,9 @@ static void worker_js_path(js_worker_t *w) {
             continue;
         }
 
-        /* Run pending jobs to resolve the promise */
-        JSContext *pctx;
-        while (JS_ExecutePendingJob(rt, &pctx) > 0)
-            ;
+        /* Drive the event loop to resolve pending fetches */
+        js_had_unhandled_rejection = 0;
+        int rc = js_loop_run(loop, rt);
 
         JS_FreeValue(ctx, promise);
 
@@ -214,11 +227,18 @@ static void worker_js_path(js_worker_t *w) {
 
         w->stats.requests++;
         js_hist_add(&w->stats.latency, elapsed_us);
-        w->stats.status_2xx++;  /* Assume success if no exception */
+
+        if (rc != 0) {
+            w->stats.errors++;
+        } else {
+            w->stats.status_2xx++;
+        }
     }
 
     JS_FreeValue(ctx, default_export);
     JS_FreeValue(ctx, bench_export);
+    JS_SetContextOpaque(ctx, NULL);
+    js_loop_free(loop);
     JS_FreeContext(ctx);
     JS_FreeRuntime(rt);
 }

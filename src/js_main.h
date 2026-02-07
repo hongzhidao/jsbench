@@ -227,6 +227,10 @@ typedef struct {
     atomic_bool     stop;
 } js_worker_t;
 
+/* ── Event loop ──────────────────────────────────────────────────────── */
+
+typedef struct js_loop js_loop_t;
+
 /* ── Function declarations ────────────────────────────────────────────── */
 
 /* util.c */
@@ -268,7 +272,7 @@ ssize_t  js_tls_read(SSL *ssl, void *buf, size_t len);
 ssize_t  js_tls_write(SSL *ssl, const void *buf, size_t len);
 void     js_tls_free(SSL *ssl);
 
-/* event_loop.c */
+/* epoll.c */
 int     js_epoll_create(void);
 int     js_epoll_add(int epfd, int fd, uint32_t events, void *ptr);
 int     js_epoll_mod(int epfd, int fd, uint32_t events, void *ptr);
@@ -287,8 +291,20 @@ void        js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
 bool        js_conn_keepalive(const js_conn_t *c);
 void        js_conn_reuse(js_conn_t *c);
 
+/* loop.c */
+js_loop_t  *js_loop_create(void);
+void        js_loop_free(js_loop_t *loop);
+int         js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
+                        SSL_CTX *ssl_ctx, JSContext *ctx,
+                        JSValue resolve, JSValue reject);
+int         js_loop_run(js_loop_t *loop, JSRuntime *rt);
+int         js_loop_pending(js_loop_t *loop);
+
 /* fetch.c */
 void    js_fetch_init(JSContext *ctx);
+JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
+                        const char *body, size_t body_len,
+                        const js_http_response_t *parsed);
 
 /* vm.c */
 JSRuntime *js_vm_rt_create(void);

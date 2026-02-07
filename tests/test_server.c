@@ -193,6 +193,16 @@ static void handle_request(int fd, const char *buf, size_t buf_len) {
     else if (strcmp(req.path, "/chunked") == 0) {
         send_chunked_response(fd);
     }
+    else if (strncmp(req.path, "/delay/", 7) == 0) {
+        /* Sleep for the given milliseconds, then respond */
+        int ms = atoi(req.path + 7);
+        if (ms > 0 && ms <= 5000) {
+            usleep((useconds_t)ms * 1000);
+        }
+        char body[64];
+        snprintf(body, sizeof(body), "delayed %dms", ms);
+        send_response(fd, 200, "OK", "text/plain", body, NULL);
+    }
     else if (strcmp(req.path, "/large") == 0) {
         /* Return a larger response for bandwidth testing */
         char *body = malloc(10240);

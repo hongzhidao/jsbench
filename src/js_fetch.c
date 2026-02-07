@@ -248,7 +248,7 @@ static JSValue js_response_json(JSContext *ctx, JSValueConst this_val,
     return promise;
 }
 
-static JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
+JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
                                 const char *body, size_t body_len,
                                 const js_http_response_t *parsed) {
     js_response_t *r = js_mallocz(ctx, sizeof(js_response_t));
@@ -412,90 +412,29 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
 
     js_conn_set_request(conn, raw.data, raw.len);
 
-    /* epoll-based I/O loop */
-    int epfd = js_epoll_create();
-    if (epfd < 0) {
+    /* Register with event loop — return a pending promise */
+    js_loop_t *loop = JS_GetContextOpaque(ctx);
+    if (!loop) {
         js_conn_free(conn);
         free(raw.data);
         if (ssl_ctx) SSL_CTX_free(ssl_ctx);
         JS_FreeCString(ctx, url_str);
         if (method_str) JS_FreeCString(ctx, method_str);
         if (body_str) JS_FreeCString(ctx, body_str);
-        return JS_ThrowInternalError(ctx, "epoll creation failed");
+        return JS_ThrowInternalError(ctx, "No event loop");
     }
 
-    js_epoll_add(epfd, conn->fd, EPOLLIN | EPOLLOUT | EPOLLET, conn);
+    JSValue resolve_funcs[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolve_funcs);
 
-    /* Set a 30-second timeout */
-    int tfd = js_timerfd_create(30.0);
-    if (tfd >= 0) js_epoll_add(epfd, tfd, EPOLLIN, NULL);
+    js_loop_add(loop, conn, raw.data, ssl_ctx, ctx,
+                resolve_funcs[0], resolve_funcs[1]);
 
-    struct epoll_event events[4];
-    bool done = false;
-    bool timed_out = false;
-
-    while (!done) {
-        int n = epoll_wait(epfd, events, 4, 1000);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-
-        for (int i = 0; i < n; i++) {
-            if (events[i].data.ptr == NULL) {
-                /* Timer fired */
-                timed_out = true;
-                done = true;
-                break;
-            }
-
-            int ret = js_conn_handle_event(conn, events[i].events);
-            if (ret != 0 || conn->state == CONN_DONE || conn->state == CONN_ERROR) {
-                done = true;
-                break;
-            }
-
-            /* Re-register for events if state changed */
-            uint32_t ev = EPOLLET;
-            if (conn->state == CONN_CONNECTING || conn->state == CONN_WRITING ||
-                conn->state == CONN_TLS_HANDSHAKE)
-                ev |= EPOLLOUT | EPOLLIN;
-            else
-                ev |= EPOLLIN;
-            js_epoll_mod(epfd, conn->fd, ev, conn);
-        }
-    }
-
-    if (tfd >= 0) close(tfd);
-    close(epfd);
-
-    JSValue result;
-    if (timed_out || conn->state == CONN_ERROR) {
-        result = JS_ThrowInternalError(ctx, timed_out ? "Request timeout" : "Connection error");
-    } else {
-        result = js_response_new(ctx, conn->response.status_code,
-                                 conn->response.status_text,
-                                 conn->response.body, conn->response.body_len,
-                                 &conn->response);
-        /* Wrap in a resolved promise */
-        JSValue resolve_funcs[2];
-        JSValue promise = JS_NewPromiseCapability(ctx, resolve_funcs);
-        JSValue ret = JS_Call(ctx, resolve_funcs[0], JS_UNDEFINED, 1, &result);
-        JS_FreeValue(ctx, ret);
-        JS_FreeValue(ctx, result);
-        JS_FreeValue(ctx, resolve_funcs[0]);
-        JS_FreeValue(ctx, resolve_funcs[1]);
-        result = promise;
-    }
-
-    js_conn_free(conn);
-    free(raw.data);
-    if (ssl_ctx) SSL_CTX_free(ssl_ctx);
     JS_FreeCString(ctx, url_str);
     if (method_str) JS_FreeCString(ctx, method_str);
     if (body_str) JS_FreeCString(ctx, body_str);
 
-    return result;
+    return promise;
 }
 
 /* ── Module initialization ────────────────────────────────────────────── */

@@ -41,9 +41,22 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* Create event loop (fetch() needs it during module evaluation) */
+    js_loop_t *loop = js_loop_create();
+    if (!loop) {
+        fprintf(stderr, "Error: failed to create event loop\n");
+        JS_FreeContext(ctx);
+        JS_FreeRuntime(rt);
+        free(source);
+        return 1;
+    }
+    JS_SetContextOpaque(ctx, loop);
+
     /* Evaluate the module */
     JSValue default_export, bench_export;
     if (js_vm_eval_module(ctx, script_path, source, &default_export, &bench_export) != 0) {
+        JS_SetContextOpaque(ctx, NULL);
+        js_loop_free(loop);
         JS_FreeContext(ctx);
         JS_FreeRuntime(rt);
         free(source);
@@ -113,6 +126,8 @@ int main(int argc, char **argv) {
 
 cleanup:
     /* Free resources */
+    JS_SetContextOpaque(ctx, NULL);
+    js_loop_free(loop);
     JS_FreeValue(ctx, default_export);
     JS_FreeValue(ctx, bench_export);
     JS_FreeContext(ctx);

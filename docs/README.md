@@ -8,6 +8,7 @@ AI 写了一个 HTTP 基准测试工具，3000 行 C 代码，能跑，但离生
 
 1. [jsbench：用AI半天写的可编程压测工具](01-ai-wrote-my-benchmark-tool.zh.md)
 2. [AI 时代，有架构就有一切](02-architecture-is-everything-in-ai-era.zh.md)
+3. [通过解决问题改进架构](03-improving-architecture-by-solving-problems.zh.md)
 
 ---
 
@@ -21,3 +22,4 @@ AI wrote an HTTP benchmarking tool — 3,000 lines of C, functional but far from
 
 1. [jsbench: A Programmable Benchmark Tool Written by AI in Half a Day](01-ai-wrote-my-benchmark-tool.en.md)
 2. [In the AI Era, Architecture Is Everything](02-architecture-is-everything-in-ai-era.en.md)
+3. [Improving Architecture by Solving Problems](03-improving-architecture-by-solving-problems.en.md)

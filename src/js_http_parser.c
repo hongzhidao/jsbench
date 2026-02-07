@@ -1,7 +1,7 @@
-#include "jsb.h"
+#include "js_main.h"
 #include <ctype.h>
 
-void jsb_http_response_init(jsb_http_response_t *r) {
+void js_http_response_init(js_http_response_t *r) {
     memset(r, 0, sizeof(*r));
     r->state = HTTP_PARSE_STATUS_LINE;
     r->body_cap = 1024;
@@ -10,14 +10,14 @@ void jsb_http_response_init(jsb_http_response_t *r) {
     r->buf = malloc(r->buf_cap);
 }
 
-void jsb_http_response_free(jsb_http_response_t *r) {
+void js_http_response_free(js_http_response_t *r) {
     free(r->body);
     free(r->buf);
     r->body = NULL;
     r->buf = NULL;
 }
 
-void jsb_http_response_reset(jsb_http_response_t *r) {
+void js_http_response_reset(js_http_response_t *r) {
     r->state = HTTP_PARSE_STATUS_LINE;
     r->status_code = 0;
     r->status_text[0] = '\0';
@@ -29,7 +29,7 @@ void jsb_http_response_reset(jsb_http_response_t *r) {
     r->buf_len = 0;
 }
 
-static void body_append(jsb_http_response_t *r, const char *data, size_t len) {
+static void body_append(js_http_response_t *r, const char *data, size_t len) {
     while (r->body_len + len > r->body_cap) {
         r->body_cap *= 2;
         r->body = realloc(r->body, r->body_cap);
@@ -38,7 +38,7 @@ static void body_append(jsb_http_response_t *r, const char *data, size_t len) {
     r->body_len += len;
 }
 
-static void buf_append(jsb_http_response_t *r, const char *data, size_t len) {
+static void buf_append(js_http_response_t *r, const char *data, size_t len) {
     while (r->buf_len + len > r->buf_cap) {
         r->buf_cap *= 2;
         r->buf = realloc(r->buf, r->buf_cap);
@@ -56,7 +56,7 @@ static ssize_t find_crlf(const char *buf, size_t len, size_t offset) {
     return -1;
 }
 
-static int parse_status_line(jsb_http_response_t *r) {
+static int parse_status_line(js_http_response_t *r) {
     ssize_t pos = find_crlf(r->buf, r->buf_len, 0);
     if (pos < 0) return 0; /* need more data */
 
@@ -92,7 +92,7 @@ static int parse_status_line(jsb_http_response_t *r) {
     return 1;
 }
 
-static int parse_header_line(jsb_http_response_t *r) {
+static int parse_header_line(js_http_response_t *r) {
     ssize_t pos = find_crlf(r->buf, r->buf_len, 0);
     if (pos < 0) return 0; /* need more data */
 
@@ -103,12 +103,12 @@ static int parse_header_line(jsb_http_response_t *r) {
         r->buf_len -= consumed;
 
         /* Determine body mode */
-        const char *te = jsb_http_response_header(r, "Transfer-Encoding");
+        const char *te = js_http_response_header(r, "Transfer-Encoding");
         if (te && strcasecmp(te, "chunked") == 0) {
             r->chunked = true;
             r->state = HTTP_PARSE_CHUNK_SIZE;
         } else {
-            const char *cl = jsb_http_response_header(r, "Content-Length");
+            const char *cl = js_http_response_header(r, "Content-Length");
             if (cl) {
                 r->content_length = (size_t)atol(cl);
                 if (r->content_length == 0) {
@@ -135,8 +135,8 @@ static int parse_header_line(jsb_http_response_t *r) {
         return 1;
     }
 
-    if (r->header_count < JSB_MAX_HEADERS) {
-        jsb_header_t *h = &r->headers[r->header_count];
+    if (r->header_count < JS_MAX_HEADERS) {
+        js_header_t *h = &r->headers[r->header_count];
         size_t nlen = (size_t)(colon - r->buf);
         if (nlen >= sizeof(h->name)) nlen = sizeof(h->name) - 1;
         memcpy(h->name, r->buf, nlen);
@@ -159,7 +159,7 @@ static int parse_header_line(jsb_http_response_t *r) {
     return 1;
 }
 
-static int parse_body_identity(jsb_http_response_t *r) {
+static int parse_body_identity(js_http_response_t *r) {
     size_t remaining = r->content_length - r->body_len;
     size_t avail = r->buf_len < remaining ? r->buf_len : remaining;
 
@@ -176,7 +176,7 @@ static int parse_body_identity(jsb_http_response_t *r) {
     return 0;
 }
 
-static int parse_chunk_size(jsb_http_response_t *r) {
+static int parse_chunk_size(js_http_response_t *r) {
     ssize_t pos = find_crlf(r->buf, r->buf_len, 0);
     if (pos < 0) return 0;
 
@@ -198,7 +198,7 @@ static int parse_chunk_size(jsb_http_response_t *r) {
     return 1;
 }
 
-static int parse_chunk_data(jsb_http_response_t *r) {
+static int parse_chunk_data(js_http_response_t *r) {
     size_t avail = r->buf_len < r->chunk_remaining ? r->buf_len : r->chunk_remaining;
 
     if (avail > 0) {
@@ -221,7 +221,7 @@ static int parse_chunk_data(jsb_http_response_t *r) {
     return 0;
 }
 
-static int parse_chunk_trailer(jsb_http_response_t *r) {
+static int parse_chunk_trailer(js_http_response_t *r) {
     /* Read trailing \r\n */
     ssize_t pos = find_crlf(r->buf, r->buf_len, 0);
     if (pos < 0) {
@@ -246,7 +246,7 @@ static int parse_chunk_trailer(jsb_http_response_t *r) {
     return 1;
 }
 
-int jsb_http_response_feed(jsb_http_response_t *r, const char *data, size_t len) {
+int js_http_response_feed(js_http_response_t *r, const char *data, size_t len) {
     buf_append(r, data, len);
 
     int progress = 1;
@@ -282,7 +282,7 @@ int jsb_http_response_feed(jsb_http_response_t *r, const char *data, size_t len)
     return 0;  /* need more data */
 }
 
-const char *jsb_http_response_header(const jsb_http_response_t *r, const char *name) {
+const char *js_http_response_header(const js_http_response_t *r, const char *name) {
     for (int i = 0; i < r->header_count; i++) {
         if (strcasecmp(r->headers[i].name, name) == 0)
             return r->headers[i].value;

@@ -1,25 +1,25 @@
-#include "jsb.h"
+#include "js_main.h"
 
 /* ── C-path worker: string/object/array modes ─────────────────────────── */
 
-static void worker_c_path(jsb_worker_t *w) {
-    jsb_config_t *cfg = w->config;
-    int epfd = jsb_epoll_create();
+static void worker_c_path(js_worker_t *w) {
+    js_config_t *cfg = w->config;
+    int epfd = js_epoll_create();
     if (epfd < 0) return;
 
     /* Timer for duration */
     int tfd = -1;
     if (cfg->duration_sec > 0) {
-        tfd = jsb_timerfd_create(cfg->duration_sec);
-        if (tfd >= 0) jsb_epoll_add(epfd, tfd, EPOLLIN, NULL);
+        tfd = js_timerfd_create(cfg->duration_sec);
+        if (tfd >= 0) js_epoll_add(epfd, tfd, EPOLLIN, NULL);
     }
 
     /* Create connections */
-    jsb_conn_t **conns = calloc((size_t)w->conn_count, sizeof(jsb_conn_t *));
+    js_conn_t **conns = calloc((size_t)w->conn_count, sizeof(js_conn_t *));
     int active = 0;
 
     for (int i = 0; i < w->conn_count; i++) {
-        conns[i] = jsb_conn_create((struct sockaddr *)&cfg->addr, cfg->addr_len,
+        conns[i] = js_conn_create((struct sockaddr *)&cfg->addr, cfg->addr_len,
                                     cfg->use_tls ? cfg->ssl_ctx : NULL,
                                     cfg->requests[0].url.host);
         if (!conns[i]) {
@@ -31,10 +31,10 @@ static void worker_c_path(jsb_worker_t *w) {
         /* Assign request (round-robin for array mode) */
         int req_idx = i % cfg->request_count;
         conns[i]->req_index = req_idx;
-        jsb_conn_set_request(conns[i], cfg->requests[req_idx].data,
+        js_conn_set_request(conns[i], cfg->requests[req_idx].data,
                              cfg->requests[req_idx].len);
 
-        jsb_epoll_add(epfd, conns[i]->fd, EPOLLIN | EPOLLOUT | EPOLLET, conns[i]);
+        js_epoll_add(epfd, conns[i]->fd, EPOLLIN | EPOLLOUT | EPOLLET, conns[i]);
         active++;
     }
 
@@ -58,17 +58,17 @@ static void worker_c_path(jsb_worker_t *w) {
                 break;
             }
 
-            jsb_conn_t *c = events[i].data.ptr;
-            jsb_conn_handle_event(c, events[i].events);
+            js_conn_t *c = events[i].data.ptr;
+            js_conn_handle_event(c, events[i].events);
 
             if (c->state == CONN_DONE) {
                 /* Record stats */
-                uint64_t elapsed_ns = jsb_now_ns() - c->start_ns;
+                uint64_t elapsed_ns = js_now_ns() - c->start_ns;
                 double elapsed_us = (double)elapsed_ns / 1000.0;
 
                 w->stats.requests++;
                 w->stats.bytes_read += c->response.body_len;
-                jsb_hist_add(&w->stats.latency, elapsed_us);
+                js_hist_add(&w->stats.latency, elapsed_us);
 
                 int code = c->response.status_code;
                 if (code >= 200 && code < 300) w->stats.status_2xx++;
@@ -81,16 +81,16 @@ static void worker_c_path(jsb_worker_t *w) {
                 int next_idx = (c->req_index + 1) % cfg->request_count;
                 c->req_index = next_idx;
 
-                if (jsb_conn_keepalive(c)) {
+                if (js_conn_keepalive(c)) {
                     /* Reuse connection: just reset parser, send next request */
-                    jsb_conn_reuse(c);
-                    jsb_conn_set_request(c, cfg->requests[next_idx].data,
+                    js_conn_reuse(c);
+                    js_conn_set_request(c, cfg->requests[next_idx].data,
                                          cfg->requests[next_idx].len);
-                    jsb_epoll_mod(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
+                    js_epoll_mod(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
                 } else {
                     /* Server closed: reconnect */
-                    jsb_epoll_del(epfd, c->fd);
-                    jsb_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
+                    js_epoll_del(epfd, c->fd);
+                    js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
                                   cfg->use_tls ? cfg->ssl_ctx : NULL,
                                   cfg->requests[0].url.host);
 
@@ -100,9 +100,9 @@ static void worker_c_path(jsb_worker_t *w) {
                         continue;
                     }
 
-                    jsb_conn_set_request(c, cfg->requests[next_idx].data,
+                    js_conn_set_request(c, cfg->requests[next_idx].data,
                                          cfg->requests[next_idx].len);
-                    jsb_epoll_add(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
+                    js_epoll_add(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
                 }
 
             } else if (c->state == CONN_ERROR) {
@@ -112,10 +112,10 @@ static void worker_c_path(jsb_worker_t *w) {
                 if (timer_expired || atomic_load(&w->stop)) continue;
 
                 /* Reconnect */
-                jsb_epoll_del(epfd, c->fd);
+                js_epoll_del(epfd, c->fd);
 
                 int next_idx = c->req_index;
-                jsb_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
+                js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
                               cfg->use_tls ? cfg->ssl_ctx : NULL,
                               cfg->requests[0].url.host);
 
@@ -125,9 +125,9 @@ static void worker_c_path(jsb_worker_t *w) {
                     continue;
                 }
 
-                jsb_conn_set_request(c, cfg->requests[next_idx].data,
+                js_conn_set_request(c, cfg->requests[next_idx].data,
                                      cfg->requests[next_idx].len);
-                jsb_epoll_add(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
+                js_epoll_add(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
             } else {
                 /* Still in progress, update epoll interest */
                 uint32_t ev = EPOLLET;
@@ -136,14 +136,14 @@ static void worker_c_path(jsb_worker_t *w) {
                     ev |= EPOLLOUT | EPOLLIN;
                 else
                     ev |= EPOLLIN;
-                jsb_epoll_mod(epfd, c->fd, ev, c);
+                js_epoll_mod(epfd, c->fd, ev, c);
             }
         }
     }
 
     /* Cleanup */
     for (int i = 0; i < w->conn_count; i++) {
-        if (conns[i]) jsb_conn_free(conns[i]);
+        if (conns[i]) js_conn_free(conns[i]);
     }
     free(conns);
     if (tfd >= 0) close(tfd);
@@ -152,18 +152,18 @@ static void worker_c_path(jsb_worker_t *w) {
 
 /* ── JS-path worker: async function mode ──────────────────────────────── */
 
-static void worker_js_path(jsb_worker_t *w) {
-    jsb_config_t *cfg = w->config;
+static void worker_js_path(js_worker_t *w) {
+    js_config_t *cfg = w->config;
 
     /* Each JS worker gets its own runtime */
-    JSRuntime *rt = jsb_vm_rt_create();
-    JSContext *ctx = jsb_vm_ctx_create(rt);
+    JSRuntime *rt = js_vm_rt_create();
+    JSContext *ctx = js_vm_ctx_create(rt);
 
     /* Re-evaluate the script to get the async function */
     JSValue default_export = JS_UNDEFINED;
     JSValue bench_export = JS_UNDEFINED;
 
-    if (jsb_vm_eval_module(ctx, cfg->script_path, cfg->script_source,
+    if (js_vm_eval_module(ctx, cfg->script_path, cfg->script_source,
                            &default_export, &bench_export) != 0) {
         fprintf(stderr, "Worker %d: failed to evaluate script\n", w->id);
         JS_FreeContext(ctx);
@@ -183,14 +183,14 @@ static void worker_js_path(jsb_worker_t *w) {
     /* Timer-based duration */
     uint64_t deadline_ns = 0;
     if (cfg->duration_sec > 0) {
-        deadline_ns = jsb_now_ns() + (uint64_t)(cfg->duration_sec * 1e9);
+        deadline_ns = js_now_ns() + (uint64_t)(cfg->duration_sec * 1e9);
     }
 
     /* Run the async function in a loop */
     while (!atomic_load(&w->stop)) {
-        if (deadline_ns > 0 && jsb_now_ns() >= deadline_ns) break;
+        if (deadline_ns > 0 && js_now_ns() >= deadline_ns) break;
 
-        uint64_t start = jsb_now_ns();
+        uint64_t start = js_now_ns();
 
         /* Call the async function */
         JSValue promise = JS_Call(ctx, default_export, JS_UNDEFINED, 0, NULL);
@@ -209,11 +209,11 @@ static void worker_js_path(jsb_worker_t *w) {
 
         JS_FreeValue(ctx, promise);
 
-        uint64_t elapsed_ns = jsb_now_ns() - start;
+        uint64_t elapsed_ns = js_now_ns() - start;
         double elapsed_us = (double)elapsed_ns / 1000.0;
 
         w->stats.requests++;
-        jsb_hist_add(&w->stats.latency, elapsed_us);
+        js_hist_add(&w->stats.latency, elapsed_us);
         w->stats.status_2xx++;  /* Assume success if no exception */
     }
 
@@ -225,9 +225,9 @@ static void worker_js_path(jsb_worker_t *w) {
 
 /* ── Worker thread entry point ────────────────────────────────────────── */
 
-void *jsb_worker_run(void *arg) {
-    jsb_worker_t *w = arg;
-    jsb_stats_init(&w->stats);
+void *js_worker_run(void *arg) {
+    js_worker_t *w = arg;
+    js_stats_init(&w->stats);
 
     if (w->config->mode == MODE_BENCH_ASYNC) {
         worker_js_path(w);

@@ -1,4 +1,4 @@
-#include "jsb.h"
+#include "js_main.h"
 
 /* ── console.log binding ──────────────────────────────────────────────── */
 
@@ -17,7 +17,7 @@ static JSValue js_console_log(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
-void jsb_vm_setup_console(JSContext *ctx) {
+void js_vm_setup_console(JSContext *ctx) {
     JSValue global = JS_GetGlobalObject(ctx);
     JSValue console = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, console, "log",
@@ -32,9 +32,9 @@ void jsb_vm_setup_console(JSContext *ctx) {
 
 /* ── Unhandled promise rejection tracker ──────────────────────────────── */
 
-int jsb_had_unhandled_rejection = 0;
+int js_had_unhandled_rejection = 0;
 
-static void jsb_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
+static void js_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
                                           JSValueConst reason,
                                           JS_BOOL is_handled, void *opaque) {
     (void)promise;
@@ -42,28 +42,28 @@ static void jsb_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
     if (is_handled) return;
     /* Only print the first unhandled rejection to avoid duplicates
      * from promise chain propagation (fetch reject -> await reject). */
-    if (!jsb_had_unhandled_rejection) {
+    if (!js_had_unhandled_rejection) {
         const char *str = JS_ToCString(ctx, reason);
         if (str) {
             fprintf(stderr, "Error: %s\n", str);
             JS_FreeCString(ctx, str);
         }
     }
-    jsb_had_unhandled_rejection = 1;
+    js_had_unhandled_rejection = 1;
 }
 
 /* ── Runtime / Context creation ───────────────────────────────────────── */
 
-JSRuntime *jsb_vm_rt_create(void) {
+JSRuntime *js_vm_rt_create(void) {
     JSRuntime *rt = JS_NewRuntime();
     if (!rt) return NULL;
     JS_SetMaxStackSize(rt, 1024 * 1024);  /* 1MB stack */
     JS_SetMemoryLimit(rt, 128 * 1024 * 1024);  /* 128MB memory */
-    JS_SetHostPromiseRejectionTracker(rt, jsb_promise_rejection_tracker, NULL);
+    JS_SetHostPromiseRejectionTracker(rt, js_promise_rejection_tracker, NULL);
     return rt;
 }
 
-JSContext *jsb_vm_ctx_create(JSRuntime *rt) {
+JSContext *js_vm_ctx_create(JSRuntime *rt) {
     JSContext *ctx = JS_NewContext(rt);
     if (!ctx) return NULL;
 
@@ -71,8 +71,8 @@ JSContext *jsb_vm_ctx_create(JSRuntime *rt) {
     JS_SetModuleLoaderFunc(rt, NULL, NULL, NULL);
 
     /* Set up console and fetch */
-    jsb_vm_setup_console(ctx);
-    jsb_fetch_init(ctx);
+    js_vm_setup_console(ctx);
+    js_fetch_init(ctx);
 
     return ctx;
 }
@@ -83,7 +83,7 @@ JSContext *jsb_vm_ctx_create(JSRuntime *rt) {
  * Evaluate an ES module and extract 'default' and 'bench' exports.
  * We wrap the user script in a module evaluation context.
  */
-int jsb_vm_eval_module(JSContext *ctx, const char *filename,
+int js_vm_eval_module(JSContext *ctx, const char *filename,
                        const char *source, JSValue *default_export,
                        JSValue *bench_export) {
     *default_export = JS_UNDEFINED;
@@ -147,7 +147,7 @@ int jsb_vm_eval_module(JSContext *ctx, const char *filename,
 
 /* ── Detect mode from default export ──────────────────────────────────── */
 
-jsb_mode_t jsb_vm_detect_mode(JSContext *ctx, JSValue default_export) {
+js_mode_t js_vm_detect_mode(JSContext *ctx, JSValue default_export) {
     if (JS_IsUndefined(default_export) || JS_IsNull(default_export) ||
         JS_IsUninitialized(default_export))
         return MODE_CLI;
@@ -169,8 +169,8 @@ jsb_mode_t jsb_vm_detect_mode(JSContext *ctx, JSValue default_export) {
 
 /* ── Extract bench config ─────────────────────────────────────────────── */
 
-int jsb_vm_extract_config(JSContext *ctx, JSValue bench_export,
-                          jsb_config_t *config) {
+int js_vm_extract_config(JSContext *ctx, JSValue bench_export,
+                          js_config_t *config) {
     if (JS_IsUndefined(bench_export) || !JS_IsObject(bench_export))
         return 0;
 
@@ -196,7 +196,7 @@ int jsb_vm_extract_config(JSContext *ctx, JSValue bench_export,
     if (JS_IsString(v)) {
         const char *s = JS_ToCString(ctx, v);
         if (s) {
-            config->duration_sec = jsb_parse_duration(s);
+            config->duration_sec = js_parse_duration(s);
             JS_FreeCString(ctx, s);
         }
     }
@@ -228,9 +228,9 @@ int jsb_vm_extract_config(JSContext *ctx, JSValue bench_export,
 /* ── Extract request descriptors ──────────────────────────────────────── */
 
 static int extract_single_request(JSContext *ctx, JSValue val,
-                                  jsb_config_t *config, const char *target_override) {
-    jsb_request_desc_t desc = {0};
-    jsb_url_t url;
+                                  js_config_t *config, const char *target_override) {
+    js_request_desc_t desc = {0};
+    js_url_t url;
 
     if (JS_IsString(val)) {
         const char *s = JS_ToCString(ctx, val);
@@ -238,22 +238,22 @@ static int extract_single_request(JSContext *ctx, JSValue val,
 
         /* If target override, combine target base with path */
         if (target_override) {
-            jsb_url_t turl;
-            if (jsb_parse_url(target_override, &turl) != 0) {
+            js_url_t turl;
+            if (js_parse_url(target_override, &turl) != 0) {
                 JS_FreeCString(ctx, s);
                 return -1;
             }
             /* If val is a path (starts with /), combine with target */
             if (s[0] == '/') {
-                char full_url[JSB_MAX_URL_LEN];
+                char full_url[JS_MAX_URL_LEN];
                 snprintf(full_url, sizeof(full_url), "%s://%s:%d%s",
                          turl.scheme, turl.host, turl.port, s);
-                if (jsb_parse_url(full_url, &url) != 0) {
+                if (js_parse_url(full_url, &url) != 0) {
                     JS_FreeCString(ctx, s);
                     return -1;
                 }
             } else {
-                if (jsb_parse_url(s, &url) != 0) {
+                if (js_parse_url(s, &url) != 0) {
                     JS_FreeCString(ctx, s);
                     return -1;
                 }
@@ -265,7 +265,7 @@ static int extract_single_request(JSContext *ctx, JSValue val,
                 strcpy(url.scheme, turl.scheme);
             }
         } else {
-            if (jsb_parse_url(s, &url) != 0) {
+            if (js_parse_url(s, &url) != 0) {
                 JS_FreeCString(ctx, s);
                 return -1;
             }
@@ -289,19 +289,19 @@ static int extract_single_request(JSContext *ctx, JSValue val,
 
         /* Handle path-only URLs with target override */
         if (target_override && url_s[0] == '/') {
-            jsb_url_t turl;
-            if (jsb_parse_url(target_override, &turl) == 0) {
-                char full_url[JSB_MAX_URL_LEN];
+            js_url_t turl;
+            if (js_parse_url(target_override, &turl) == 0) {
+                char full_url[JS_MAX_URL_LEN];
                 snprintf(full_url, sizeof(full_url), "%s://%s:%d%s",
                          turl.scheme, turl.host, turl.port, url_s);
-                jsb_parse_url(full_url, &url);
+                js_parse_url(full_url, &url);
             } else {
-                jsb_parse_url(url_s, &url);
+                js_parse_url(url_s, &url);
             }
         } else if (target_override) {
-            jsb_parse_url(url_s, &url);
-            jsb_url_t turl;
-            if (jsb_parse_url(target_override, &turl) == 0) {
+            js_parse_url(url_s, &url);
+            js_url_t turl;
+            if (js_parse_url(target_override, &turl) == 0) {
                 strcpy(url.host, turl.host);
                 url.port = turl.port;
                 strcpy(url.port_str, turl.port_str);
@@ -309,7 +309,7 @@ static int extract_single_request(JSContext *ctx, JSValue val,
                 strcpy(url.scheme, turl.scheme);
             }
         } else {
-            jsb_parse_url(url_s, &url);
+            js_parse_url(url_s, &url);
         }
         JS_FreeCString(ctx, url_s);
 
@@ -365,10 +365,10 @@ static int extract_single_request(JSContext *ctx, JSValue val,
 
     /* Serialize the request */
     config->requests = realloc(config->requests,
-                               sizeof(jsb_raw_request_t) * (size_t)(config->request_count + 1));
-    jsb_raw_request_t *raw = &config->requests[config->request_count];
+                               sizeof(js_raw_request_t) * (size_t)(config->request_count + 1));
+    js_raw_request_t *raw = &config->requests[config->request_count];
 
-    if (jsb_serialize_request(&desc, &url, config->host, raw) != 0) {
+    if (js_serialize_request(&desc, &url, config->host, raw) != 0) {
         /* cleanup */
         if (desc.method && desc.method != (char*)"GET" && desc.method != (char*)"POST")
             free(desc.method);
@@ -395,8 +395,8 @@ static int extract_single_request(JSContext *ctx, JSValue val,
     return 0;
 }
 
-int jsb_vm_extract_requests(JSContext *ctx, JSValue default_export,
-                            jsb_config_t *config) {
+int js_vm_extract_requests(JSContext *ctx, JSValue default_export,
+                            js_config_t *config) {
     config->requests = NULL;
     config->request_count = 0;
 

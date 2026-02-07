@@ -1,10 +1,10 @@
-#include "jsb.h"
+#include "js_main.h"
 
-int jsb_epoll_create(void) {
+int js_epoll_create(void) {
     return epoll_create1(EPOLL_CLOEXEC);
 }
 
-int jsb_epoll_add(int epfd, int fd, uint32_t events, void *ptr) {
+int js_epoll_add(int epfd, int fd, uint32_t events, void *ptr) {
     struct epoll_event ev = {
         .events = events,
         .data.ptr = ptr
@@ -12,7 +12,7 @@ int jsb_epoll_add(int epfd, int fd, uint32_t events, void *ptr) {
     return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
 }
 
-int jsb_epoll_mod(int epfd, int fd, uint32_t events, void *ptr) {
+int js_epoll_mod(int epfd, int fd, uint32_t events, void *ptr) {
     struct epoll_event ev = {
         .events = events,
         .data.ptr = ptr
@@ -20,11 +20,11 @@ int jsb_epoll_mod(int epfd, int fd, uint32_t events, void *ptr) {
     return epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
 }
 
-int jsb_epoll_del(int epfd, int fd) {
+int js_epoll_del(int epfd, int fd) {
     return epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
 }
 
-int jsb_timerfd_create(double seconds) {
+int js_timerfd_create(double seconds) {
     int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (tfd < 0) return -1;
 

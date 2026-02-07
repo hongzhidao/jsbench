@@ -1,4 +1,4 @@
-#include "jsb.h"
+#include "js_main.h"
 
 static void usage(const char *prog) {
     fprintf(stderr, "Usage: %s <script.js>\n", prog);
@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
 
     /* Read script file */
     size_t source_len;
-    char *source = jsb_read_file(script_path, &source_len);
+    char *source = js_read_file(script_path, &source_len);
     if (!source) {
         fprintf(stderr, "Error: cannot read file '%s': %s\n",
                 script_path, strerror(errno));
@@ -26,14 +26,14 @@ int main(int argc, char **argv) {
     }
 
     /* Initialize QuickJS */
-    JSRuntime *rt = jsb_vm_rt_create();
+    JSRuntime *rt = js_vm_rt_create();
     if (!rt) {
         fprintf(stderr, "Error: failed to create JS runtime\n");
         free(source);
         return 1;
     }
 
-    JSContext *ctx = jsb_vm_ctx_create(rt);
+    JSContext *ctx = js_vm_ctx_create(rt);
     if (!ctx) {
         fprintf(stderr, "Error: failed to create JS context\n");
         JS_FreeRuntime(rt);
@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
 
     /* Evaluate the module */
     JSValue default_export, bench_export;
-    if (jsb_vm_eval_module(ctx, script_path, source, &default_export, &bench_export) != 0) {
+    if (js_vm_eval_module(ctx, script_path, source, &default_export, &bench_export) != 0) {
         JS_FreeContext(ctx);
         JS_FreeRuntime(rt);
         free(source);
@@ -51,10 +51,10 @@ int main(int argc, char **argv) {
     }
 
     /* Detect mode */
-    jsb_mode_t mode = jsb_vm_detect_mode(ctx, default_export);
+    js_mode_t mode = js_vm_detect_mode(ctx, default_export);
 
     /* Build config */
-    jsb_config_t config = {0};
+    js_config_t config = {0};
     config.mode = mode;
     config.script_path = strdup(script_path);
     config.script_source = source;
@@ -66,14 +66,14 @@ int main(int argc, char **argv) {
 
     if (mode == MODE_CLI) {
         /* CLI mode: just run pending async jobs */
-        ret = jsb_cli_run(ctx, &config);
+        ret = js_cli_run(ctx, &config);
     } else {
         /* Benchmark mode: extract config and requests */
-        jsb_vm_extract_config(ctx, bench_export, &config);
+        js_vm_extract_config(ctx, bench_export, &config);
 
         if (mode != MODE_BENCH_ASYNC) {
             /* Extract and serialize requests for C-path */
-            if (jsb_vm_extract_requests(ctx, default_export, &config) != 0) {
+            if (js_vm_extract_requests(ctx, default_export, &config) != 0) {
                 fprintf(stderr, "Error: failed to extract request configuration\n");
                 ret = 1;
                 goto cleanup;
@@ -96,9 +96,9 @@ int main(int argc, char **argv) {
 
             /* Create a minimal request entry for the orchestrator */
             config.request_count = 1;
-            config.requests = calloc(1, sizeof(jsb_raw_request_t));
+            config.requests = calloc(1, sizeof(js_raw_request_t));
             if (config.target) {
-                jsb_parse_url(config.target, &config.requests[0].url);
+                js_parse_url(config.target, &config.requests[0].url);
                 config.use_tls = config.requests[0].url.is_tls;
             }
         }
@@ -108,7 +108,7 @@ int main(int argc, char **argv) {
         }
 
         config.mode = mode;
-        ret = jsb_bench_run(&config);
+        ret = js_bench_run(&config);
     }
 
 cleanup:

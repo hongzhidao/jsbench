@@ -1,6 +1,6 @@
-#include "jsb.h"
+#include "js_main.h"
 
-SSL_CTX *jsb_tls_ctx_create(void) {
+SSL_CTX *js_tls_ctx_create(void) {
     SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
     if (!ctx) return NULL;
 
@@ -15,7 +15,7 @@ SSL_CTX *jsb_tls_ctx_create(void) {
     return ctx;
 }
 
-SSL *jsb_tls_new(SSL_CTX *ctx, int fd, const char *hostname) {
+SSL *js_tls_new(SSL_CTX *ctx, int fd, const char *hostname) {
     SSL *ssl = SSL_new(ctx);
     if (!ssl) return NULL;
 
@@ -29,7 +29,7 @@ SSL *jsb_tls_new(SSL_CTX *ctx, int fd, const char *hostname) {
     return ssl;
 }
 
-int jsb_tls_handshake(SSL *ssl) {
+int js_tls_handshake(SSL *ssl) {
     int ret = SSL_connect(ssl);
     if (ret == 1) return 0;  /* success */
 
@@ -40,7 +40,7 @@ int jsb_tls_handshake(SSL *ssl) {
     return -1;  /* error */
 }
 
-ssize_t jsb_tls_read(SSL *ssl, void *buf, size_t len) {
+ssize_t js_tls_read(SSL *ssl, void *buf, size_t len) {
     int ret = SSL_read(ssl, buf, (int)len);
     if (ret > 0) return ret;
 
@@ -55,7 +55,7 @@ ssize_t jsb_tls_read(SSL *ssl, void *buf, size_t len) {
     return -1;
 }
 
-ssize_t jsb_tls_write(SSL *ssl, const void *buf, size_t len) {
+ssize_t js_tls_write(SSL *ssl, const void *buf, size_t len) {
     int ret = SSL_write(ssl, buf, (int)len);
     if (ret > 0) return ret;
 
@@ -69,7 +69,7 @@ ssize_t jsb_tls_write(SSL *ssl, const void *buf, size_t len) {
     return -1;
 }
 
-void jsb_tls_free(SSL *ssl) {
+void js_tls_free(SSL *ssl) {
     if (ssl) {
         SSL_shutdown(ssl);
         SSL_free(ssl);

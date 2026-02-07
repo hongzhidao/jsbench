@@ -1,7 +1,7 @@
-#include "jsb.h"
+#include "js_main.h"
 #include <ctype.h>
 
-int jsb_parse_url(const char *url_str, jsb_url_t *out) {
+int js_parse_url(const char *url_str, js_url_t *out) {
     memset(out, 0, sizeof(*out));
 
     const char *p = url_str;
@@ -67,7 +67,7 @@ int jsb_parse_url(const char *url_str, jsb_url_t *out) {
     return 0;
 }
 
-double jsb_parse_duration(const char *s) {
+double js_parse_duration(const char *s) {
     if (!s || !*s) return 0;
     char *end;
     double val = strtod(s, &end);
@@ -87,7 +87,7 @@ double jsb_parse_duration(const char *s) {
     }
 }
 
-char *jsb_read_file(const char *path, size_t *len) {
+char *js_read_file(const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
 
@@ -108,7 +108,7 @@ char *jsb_read_file(const char *path, size_t *len) {
     return buf;
 }
 
-void jsb_format_bytes(uint64_t bytes, char *buf, size_t buf_len) {
+void js_format_bytes(uint64_t bytes, char *buf, size_t buf_len) {
     if (bytes >= 1073741824ULL)
         snprintf(buf, buf_len, "%.1f GB", (double)bytes / 1073741824.0);
     else if (bytes >= 1048576ULL)
@@ -119,7 +119,7 @@ void jsb_format_bytes(uint64_t bytes, char *buf, size_t buf_len) {
         snprintf(buf, buf_len, "%lu B", (unsigned long)bytes);
 }
 
-void jsb_format_duration(double us, char *buf, size_t buf_len) {
+void js_format_duration(double us, char *buf, size_t buf_len) {
     if (us >= 1000000.0)
         snprintf(buf, buf_len, "%.2fs", us / 1000000.0);
     else if (us >= 1000.0)
@@ -128,22 +128,22 @@ void jsb_format_duration(double us, char *buf, size_t buf_len) {
         snprintf(buf, buf_len, "%.2fus", us);
 }
 
-int jsb_set_nonblocking(int fd) {
+int js_set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return -1;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
-uint64_t jsb_now_ns(void) {
+uint64_t js_now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-int jsb_serialize_request(const jsb_request_desc_t *desc,
-                          const jsb_url_t *url,
+int js_serialize_request(const js_request_desc_t *desc,
+                          const js_url_t *url,
                           const char *host_override,
-                          jsb_raw_request_t *out) {
+                          js_raw_request_t *out) {
     const char *method = desc->method ? desc->method : "GET";
     const char *path = url->path[0] ? url->path : "/";
     const char *host = host_override ? host_override : url->host;

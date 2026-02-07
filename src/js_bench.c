@@ -1,6 +1,6 @@
-#include "jsb.h"
+#include "js_main.h"
 
-int jsb_bench_run(jsb_config_t *config) {
+int js_bench_run(js_config_t *config) {
     int nthreads = config->threads;
     int nconns = config->connections;
 
@@ -9,12 +9,12 @@ int jsb_bench_run(jsb_config_t *config) {
     if (nthreads > nconns) nthreads = nconns;
 
     /* Resolve DNS once */
-    jsb_url_t *first_url = &config->requests[0].url;
+    js_url_t *first_url = &config->requests[0].url;
 
     /* If target override, use that for DNS */
-    jsb_url_t target_url;
+    js_url_t target_url;
     if (config->target) {
-        if (jsb_parse_url(config->target, &target_url) == 0) {
+        if (js_parse_url(config->target, &target_url) == 0) {
             first_url = &target_url;
         }
     }
@@ -34,7 +34,7 @@ int jsb_bench_run(jsb_config_t *config) {
 
     /* Create TLS context if needed */
     if (config->use_tls) {
-        config->ssl_ctx = jsb_tls_ctx_create();
+        config->ssl_ctx = js_tls_ctx_create();
         if (!config->ssl_ctx) {
             fprintf(stderr, "Failed to create TLS context\n");
             return 1;
@@ -62,7 +62,7 @@ int jsb_bench_run(jsb_config_t *config) {
     printf("\n");
 
     /* Allocate workers */
-    jsb_worker_t *workers = calloc((size_t)nthreads, sizeof(jsb_worker_t));
+    js_worker_t *workers = calloc((size_t)nthreads, sizeof(js_worker_t));
 
     /* Distribute connections across threads */
     int conns_per_thread = nconns / nthreads;
@@ -76,11 +76,11 @@ int jsb_bench_run(jsb_config_t *config) {
     }
 
     /* Start timing */
-    uint64_t start_ns = jsb_now_ns();
+    uint64_t start_ns = js_now_ns();
 
     /* Launch worker threads */
     for (int i = 0; i < nthreads; i++) {
-        pthread_create(&workers[i].thread, NULL, jsb_worker_run, &workers[i]);
+        pthread_create(&workers[i].thread, NULL, js_worker_run, &workers[i]);
     }
 
     /* Wait for all workers */
@@ -88,18 +88,18 @@ int jsb_bench_run(jsb_config_t *config) {
         pthread_join(workers[i].thread, NULL);
     }
 
-    uint64_t end_ns = jsb_now_ns();
+    uint64_t end_ns = js_now_ns();
     double actual_duration = (double)(end_ns - start_ns) / 1e9;
 
     /* Aggregate stats */
-    jsb_stats_t total;
-    jsb_stats_init(&total);
+    js_stats_t total;
+    js_stats_init(&total);
     for (int i = 0; i < nthreads; i++) {
-        jsb_stats_merge(&total, &workers[i].stats);
+        js_stats_merge(&total, &workers[i].stats);
     }
 
     /* Print results */
-    jsb_stats_print(&total, actual_duration);
+    js_stats_print(&total, actual_duration);
 
     /* Cleanup */
     free(workers);

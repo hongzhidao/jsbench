@@ -1,9 +1,9 @@
-#include "jsb.h"
+#include "js_main.h"
 
 /* ── Headers class ────────────────────────────────────────────────────── */
 
 typedef struct {
-    jsb_header_t *entries;
+    js_header_t *entries;
     int           count;
     int           cap;
 } js_headers_t;
@@ -27,7 +27,7 @@ static JSClassDef js_headers_class = {
 static js_headers_t *js_headers_create(JSContext *ctx) {
     js_headers_t *h = js_mallocz(ctx, sizeof(js_headers_t));
     h->cap = 16;
-    h->entries = malloc(sizeof(jsb_header_t) * (size_t)h->cap);
+    h->entries = malloc(sizeof(js_header_t) * (size_t)h->cap);
     h->count = 0;
     return h;
 }
@@ -43,7 +43,7 @@ static void js_headers_set(js_headers_t *h, const char *name, const char *value)
     /* Add new */
     if (h->count >= h->cap) {
         h->cap *= 2;
-        h->entries = realloc(h->entries, sizeof(jsb_header_t) * (size_t)h->cap);
+        h->entries = realloc(h->entries, sizeof(js_header_t) * (size_t)h->cap);
     }
     snprintf(h->entries[h->count].name, sizeof(h->entries[h->count].name), "%s", name);
     snprintf(h->entries[h->count].value, sizeof(h->entries[h->count].value), "%s", value);
@@ -112,7 +112,7 @@ static JSValue js_headers_delete(JSContext *ctx, JSValueConst this_val,
         if (strcasecmp(h->entries[i].name, name) == 0) {
             /* Shift remaining entries */
             memmove(&h->entries[i], &h->entries[i+1],
-                    sizeof(jsb_header_t) * (size_t)(h->count - i - 1));
+                    sizeof(js_header_t) * (size_t)(h->count - i - 1));
             h->count--;
             break;
         }
@@ -250,7 +250,7 @@ static JSValue js_response_json(JSContext *ctx, JSValueConst this_val,
 
 static JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
                                 const char *body, size_t body_len,
-                                const jsb_http_response_t *parsed) {
+                                const js_http_response_t *parsed) {
     js_response_t *r = js_mallocz(ctx, sizeof(js_response_t));
     r->status = status;
     r->status_text = strdup(status_text ? status_text : "");
@@ -349,8 +349,8 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     }
 
     /* Parse URL */
-    jsb_url_t url;
-    if (jsb_parse_url(url_str, &url) != 0) {
+    js_url_t url;
+    if (js_parse_url(url_str, &url) != 0) {
         JS_FreeCString(ctx, url_str);
         if (method_str) JS_FreeCString(ctx, method_str);
         if (body_str) JS_FreeCString(ctx, body_str);
@@ -369,14 +369,14 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     }
 
     /* Build HTTP request */
-    jsb_request_desc_t desc = {
+    js_request_desc_t desc = {
         .method = (char *)method,
         .headers = extra_headers[0] ? extra_headers : NULL,
         .body = (char *)body,
         .body_len = body_len,
     };
-    jsb_raw_request_t raw;
-    if (jsb_serialize_request(&desc, &url, NULL, &raw) != 0) {
+    js_raw_request_t raw;
+    if (js_serialize_request(&desc, &url, NULL, &raw) != 0) {
         freeaddrinfo(res);
         JS_FreeCString(ctx, url_str);
         if (method_str) JS_FreeCString(ctx, method_str);
@@ -387,7 +387,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     /* Create TLS context if needed */
     SSL_CTX *ssl_ctx = NULL;
     if (url.is_tls) {
-        ssl_ctx = jsb_tls_ctx_create();
+        ssl_ctx = js_tls_ctx_create();
         if (!ssl_ctx) {
             free(raw.data);
             freeaddrinfo(res);
@@ -399,7 +399,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     }
 
     /* Create connection */
-    jsb_conn_t *conn = jsb_conn_create(res->ai_addr, res->ai_addrlen, ssl_ctx, url.host);
+    js_conn_t *conn = js_conn_create(res->ai_addr, res->ai_addrlen, ssl_ctx, url.host);
     freeaddrinfo(res);
     if (!conn) {
         free(raw.data);
@@ -410,12 +410,12 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
         return JS_ThrowInternalError(ctx, "Connection failed");
     }
 
-    jsb_conn_set_request(conn, raw.data, raw.len);
+    js_conn_set_request(conn, raw.data, raw.len);
 
     /* epoll-based I/O loop */
-    int epfd = jsb_epoll_create();
+    int epfd = js_epoll_create();
     if (epfd < 0) {
-        jsb_conn_free(conn);
+        js_conn_free(conn);
         free(raw.data);
         if (ssl_ctx) SSL_CTX_free(ssl_ctx);
         JS_FreeCString(ctx, url_str);
@@ -424,11 +424,11 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
         return JS_ThrowInternalError(ctx, "epoll creation failed");
     }
 
-    jsb_epoll_add(epfd, conn->fd, EPOLLIN | EPOLLOUT | EPOLLET, conn);
+    js_epoll_add(epfd, conn->fd, EPOLLIN | EPOLLOUT | EPOLLET, conn);
 
     /* Set a 30-second timeout */
-    int tfd = jsb_timerfd_create(30.0);
-    if (tfd >= 0) jsb_epoll_add(epfd, tfd, EPOLLIN, NULL);
+    int tfd = js_timerfd_create(30.0);
+    if (tfd >= 0) js_epoll_add(epfd, tfd, EPOLLIN, NULL);
 
     struct epoll_event events[4];
     bool done = false;
@@ -449,7 +449,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
                 break;
             }
 
-            int ret = jsb_conn_handle_event(conn, events[i].events);
+            int ret = js_conn_handle_event(conn, events[i].events);
             if (ret != 0 || conn->state == CONN_DONE || conn->state == CONN_ERROR) {
                 done = true;
                 break;
@@ -462,7 +462,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
                 ev |= EPOLLOUT | EPOLLIN;
             else
                 ev |= EPOLLIN;
-            jsb_epoll_mod(epfd, conn->fd, ev, conn);
+            js_epoll_mod(epfd, conn->fd, ev, conn);
         }
     }
 
@@ -488,7 +488,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
         result = promise;
     }
 
-    jsb_conn_free(conn);
+    js_conn_free(conn);
     free(raw.data);
     if (ssl_ctx) SSL_CTX_free(ssl_ctx);
     JS_FreeCString(ctx, url_str);
@@ -517,7 +517,7 @@ static const JSCFunctionListEntry js_response_proto_funcs[] = {
     JS_CFUNC_DEF("json", 0, js_response_json),
 };
 
-void jsb_fetch_init(JSContext *ctx) {
+void js_fetch_init(JSContext *ctx) {
     /* Register Headers class */
     JS_NewClassID(&js_headers_class_id);
     JS_NewClass(JS_GetRuntime(ctx), js_headers_class_id, &js_headers_class);

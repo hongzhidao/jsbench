@@ -1,6 +1,6 @@
-#include "jsb.h"
+#include "js_main.h"
 
-void jsb_hist_init(jsb_hist_t *h) {
+void js_hist_init(js_hist_t *h) {
     memset(h, 0, sizeof(*h));
     h->min_val = 1e18;
     h->max_val = 0;
@@ -24,7 +24,7 @@ static double slot_to_us(int slot) {
     return HIST_FINE_MAX_US + (double)(slot - HIST_FINE_SLOTS) * HIST_COARSE_STEP;
 }
 
-void jsb_hist_add(jsb_hist_t *h, double us) {
+void js_hist_add(js_hist_t *h, double us) {
     h->count++;
     h->sum += us;
     h->sum_sq += us * us;
@@ -38,7 +38,7 @@ void jsb_hist_add(jsb_hist_t *h, double us) {
         h->slots[slot]++;
 }
 
-void jsb_hist_merge(jsb_hist_t *dst, const jsb_hist_t *src) {
+void js_hist_merge(js_hist_t *dst, const js_hist_t *src) {
     for (int i = 0; i < HIST_TOTAL_SLOTS; i++)
         dst->slots[i] += src->slots[i];
     dst->over += src->over;
@@ -49,7 +49,7 @@ void jsb_hist_merge(jsb_hist_t *dst, const jsb_hist_t *src) {
     if (src->max_val > dst->max_val) dst->max_val = src->max_val;
 }
 
-double jsb_hist_percentile(const jsb_hist_t *h, double p) {
+double js_hist_percentile(const js_hist_t *h, double p) {
     if (h->count == 0) return 0;
     uint64_t target = (uint64_t)((double)h->count * p / 100.0);
     uint64_t cumulative = 0;
@@ -62,24 +62,24 @@ double jsb_hist_percentile(const jsb_hist_t *h, double p) {
     return h->max_val;
 }
 
-double jsb_hist_mean(const jsb_hist_t *h) {
+double js_hist_mean(const js_hist_t *h) {
     if (h->count == 0) return 0;
     return h->sum / (double)h->count;
 }
 
-double jsb_hist_stdev(const jsb_hist_t *h) {
+double js_hist_stdev(const js_hist_t *h) {
     if (h->count < 2) return 0;
     double mean = h->sum / (double)h->count;
     double variance = (h->sum_sq / (double)h->count) - (mean * mean);
     return variance > 0 ? sqrt(variance) : 0;
 }
 
-void jsb_stats_init(jsb_stats_t *s) {
+void js_stats_init(js_stats_t *s) {
     memset(s, 0, sizeof(*s));
-    jsb_hist_init(&s->latency);
+    js_hist_init(&s->latency);
 }
 
-void jsb_stats_merge(jsb_stats_t *dst, const jsb_stats_t *src) {
+void js_stats_merge(js_stats_t *dst, const js_stats_t *src) {
     dst->requests += src->requests;
     dst->bytes_read += src->bytes_read;
     dst->errors += src->errors;
@@ -91,28 +91,28 @@ void jsb_stats_merge(jsb_stats_t *dst, const jsb_stats_t *src) {
     dst->status_3xx += src->status_3xx;
     dst->status_4xx += src->status_4xx;
     dst->status_5xx += src->status_5xx;
-    jsb_hist_merge(&dst->latency, &src->latency);
+    js_hist_merge(&dst->latency, &src->latency);
 }
 
-void jsb_stats_print(const jsb_stats_t *s, double duration_sec) {
+void js_stats_print(const js_stats_t *s, double duration_sec) {
     char bytes_buf[32];
     char min_buf[32], avg_buf[32], max_buf[32], stdev_buf[32];
     char p50_buf[32], p90_buf[32], p99_buf[32], p999_buf[32];
 
-    jsb_format_bytes(s->bytes_read, bytes_buf, sizeof(bytes_buf));
+    js_format_bytes(s->bytes_read, bytes_buf, sizeof(bytes_buf));
 
-    double mean = jsb_hist_mean(&s->latency);
-    double stdev = jsb_hist_stdev(&s->latency);
+    double mean = js_hist_mean(&s->latency);
+    double stdev = js_hist_stdev(&s->latency);
 
-    jsb_format_duration(s->latency.min_val, min_buf, sizeof(min_buf));
-    jsb_format_duration(mean, avg_buf, sizeof(avg_buf));
-    jsb_format_duration(s->latency.max_val, max_buf, sizeof(max_buf));
-    jsb_format_duration(stdev, stdev_buf, sizeof(stdev_buf));
+    js_format_duration(s->latency.min_val, min_buf, sizeof(min_buf));
+    js_format_duration(mean, avg_buf, sizeof(avg_buf));
+    js_format_duration(s->latency.max_val, max_buf, sizeof(max_buf));
+    js_format_duration(stdev, stdev_buf, sizeof(stdev_buf));
 
-    jsb_format_duration(jsb_hist_percentile(&s->latency, 50), p50_buf, sizeof(p50_buf));
-    jsb_format_duration(jsb_hist_percentile(&s->latency, 90), p90_buf, sizeof(p90_buf));
-    jsb_format_duration(jsb_hist_percentile(&s->latency, 99), p99_buf, sizeof(p99_buf));
-    jsb_format_duration(jsb_hist_percentile(&s->latency, 99.9), p999_buf, sizeof(p999_buf));
+    js_format_duration(js_hist_percentile(&s->latency, 50), p50_buf, sizeof(p50_buf));
+    js_format_duration(js_hist_percentile(&s->latency, 90), p90_buf, sizeof(p90_buf));
+    js_format_duration(js_hist_percentile(&s->latency, 99), p99_buf, sizeof(p99_buf));
+    js_format_duration(js_hist_percentile(&s->latency, 99.9), p999_buf, sizeof(p999_buf));
 
     double qps = duration_sec > 0 ? (double)s->requests / duration_sec : 0;
 

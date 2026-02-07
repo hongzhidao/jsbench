@@ -1,6 +1,6 @@
-#include "jsb.h"
+#include "js_main.h"
 
-int jsb_cli_run(JSContext *ctx, jsb_config_t *config) {
+int js_cli_run(JSContext *ctx, js_config_t *config) {
     (void)config;
 
     /* In CLI mode, the module has already been evaluated.
@@ -27,7 +27,7 @@ int jsb_cli_run(JSContext *ctx, jsb_config_t *config) {
     }
 
     /* Check if any unhandled promise rejections occurred during eval */
-    if (jsb_had_unhandled_rejection)
+    if (js_had_unhandled_rejection)
         return 1;
 
     return 0;

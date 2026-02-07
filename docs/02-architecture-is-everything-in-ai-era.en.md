@@ -1,4 +1,4 @@
-# In the AI Era, Architecture Is Everything
+# Refactoring AI-Generated C: An nginx Engineer's Standards
 
 > "Make it work, make it right, make it fast." — Kent Beck
 

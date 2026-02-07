@@ -1,4 +1,4 @@
-# AI 时代，有架构就有一切
+# 重构 AI 生成的 C 代码：一个 nginx 工程师的标准
 
 > "Make it work, make it right, make it fast." — Kent Beck
 

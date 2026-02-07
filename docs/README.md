@@ -1,27 +1,27 @@
-# 从AI到生产级的jsbench
+# 一个 nginx 工程师接手 AI 写的压测工具
 
-AI 写了一个 HTTP 基准测试工具，3000 行 C 代码，能跑，但离生产级还很远。这个合集记录一个 nginx 工程师逐步重构它的过程——怎么改、为什么改、AI 到底差在哪。
+AI 写了一个类似 wrk 的可编程压测工具，测试全过，能跑。但仔细一看——请求全部失败却报告零错误，同步阻塞伪装成异步，架构经不起推敲。一个 nginx 工程师逐步重构它的记录。
 
 ## 文章
 
 <!-- 每篇文章提供中英文两个版本 -->
 
-1. [jsbench：用AI半天写的可编程压测工具](01-ai-wrote-my-benchmark-tool.zh.md)
-2. [AI 时代，有架构就有一切](02-architecture-is-everything-in-ai-era.zh.md)
-3. [通过解决问题改进架构](03-improving-architecture-by-solving-problems.zh.md)
-4. [什么是好的架构](04-what-is-good-architecture.zh.md)
+1. [AI 写了一个类似 wrk 的可编程压测工具](01-ai-wrote-my-benchmark-tool.zh.md)
+2. [重构 AI 生成的 C 代码：一个 nginx 工程师的标准](02-architecture-is-everything-in-ai-era.zh.md)
+3. [AI 写的代码全部通过测试，但每个请求都失败了](03-improving-architecture-by-solving-problems.zh.md)
+4. [好的架构就是刚刚好：不多不少](04-what-is-good-architecture.zh.md)
 
 ---
 
-# From AI to Production-Grade jsbench
+# An nginx Engineer Took Over AI's Benchmark Tool
 
-AI wrote an HTTP benchmarking tool — 3,000 lines of C, functional but far from production-grade. This series documents an nginx engineer's journey of refactoring it step by step — what changed, why, and where AI fell short.
+AI built a programmable alternative to wrk. Tests passed. It ran. But look closer — every request failed yet reported zero errors, synchronous blocking masqueraded as async, and the architecture couldn't hold up. This series documents an nginx engineer refactoring it step by step.
 
 ## Articles
 
 <!-- Each article is available in both Chinese and English -->
 
-1. [jsbench: A Programmable Benchmark Tool Written by AI in Half a Day](01-ai-wrote-my-benchmark-tool.en.md)
-2. [In the AI Era, Architecture Is Everything](02-architecture-is-everything-in-ai-era.en.md)
-3. [Improving Architecture by Solving Problems](03-improving-architecture-by-solving-problems.en.md)
-4. [What Is Good Architecture](04-what-is-good-architecture.en.md)
+1. [AI Built a Programmable Alternative to wrk](01-ai-wrote-my-benchmark-tool.en.md)
+2. [Refactoring AI-Generated C: An nginx Engineer's Standards](02-architecture-is-everything-in-ai-era.en.md)
+3. [AI Code Passed Every Test, but Every Request Failed](03-improving-architecture-by-solving-problems.en.md)
+4. [Good Architecture Is Just Enough — No More, No Less](04-what-is-good-architecture.en.md)

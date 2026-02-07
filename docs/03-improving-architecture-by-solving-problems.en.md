@@ -1,4 +1,4 @@
-# Improving Architecture by Solving Problems
+# AI Code Passed Every Test, but Every Request Failed
 
 > Good architecture isn't designed upfront — it grows out of solving real problems.
 

@@ -2,3 +2,4 @@ build/
 jsb
 tests/test_server
 deps/
+tags

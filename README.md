@@ -220,7 +220,7 @@ Target: http://localhost:8080/health
 
 The first version of jsbench was built entirely through AI-assisted development — the human provided architecture decisions and requirements, the AI (Claude Opus 4.6 via [Claude Code](https://claude.ai/claude-code)) wrote all the code. AI is already very good at "make it work", but the design isn't where I want it yet. I'm now manually refactoring the internals to make it right.
 
-I'm writing about this process in a series called **"From AI to Production-Grade jsbench"** — see the [docs](docs/) folder for articles in both Chinese and English.
+I'm writing about this process in a series called **"An nginx Engineer Took Over AI's Benchmark Tool"** — see the [docs](docs/) folder for articles in both Chinese and English.
 
 This project is actively maintained. Issues and pull requests are welcome.
 

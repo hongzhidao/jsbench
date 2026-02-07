@@ -1,4 +1,4 @@
-# What Is Good Architecture
+# Good Architecture Is Just Enough — No More, No Less
 
 The previous posts were about fixing problems and changing code. This one steps back to think: what does good architecture actually look like.
 
@@ -22,11 +22,13 @@ This matters — because modules aren't sealed forever. You'll open them someday
 
 So good hiding works on two levels: **simple on the outside, clean on the inside.**
 
-## Solving a Class of Problems
+## Solving Real Problems
 
-Good architecture provides a framework, not a point solution for a specific requirement.
+Good architecture isn't invented in a vacuum — it grows out of solving real problems.
 
-nginx's event loop wasn't designed to "handle HTTP requests" — it solves the class of problems around "efficiently managing large numbers of concurrent connections." That's why the same architecture handles HTTP, mail, and stream. jsbench's js_loop.c is similar — it wasn't designed to "make fetch concurrent" — it solves the class of problems around "asynchronously driving multiple I/O operations in QuickJS."
+A classic example is nginx. In the early 2000s, the internet hit the C10K problem — how to handle ten thousand concurrent connections on a single server. The traditional thread-per-connection model couldn't scale: the overhead of context switching and memory consumption caused servers to collapse as connection counts climbed. nginx answered this challenge with an event-driven architecture — a single thread managing massive numbers of connections through epoll/kqueue, without dedicating a thread to each connection, keeping resource usage remarkably low.
+
+More importantly, nginx didn't just solve C10K — it solved the broader class of problems around "efficiently managing large numbers of concurrent connections." That's why the same architecture handles HTTP, mail, and stream, and supports hundreds of modules without losing control. Good architecture provides a framework, not a point solution for a specific requirement.
 
 ## What Good Architecture Achieves
 

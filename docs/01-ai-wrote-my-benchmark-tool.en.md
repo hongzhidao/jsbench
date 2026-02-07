@@ -1,4 +1,4 @@
-# jsbench: A Programmable Benchmark Tool Written by AI in Half a Day
+# AI Built a Programmable Alternative to wrk
 
 If you do backend work, you've used benchmarking tools. But have you noticed the awkward state of things?
 

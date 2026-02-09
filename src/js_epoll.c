@@ -34,6 +34,29 @@ int js_epoll_del(js_event_t *ev) {
     return epoll_ctl(js_epfd, EPOLL_CTL_DEL, ev->fd, NULL);
 }
 
+int js_epoll_poll(int timeout_ms) {
+    struct epoll_event events[256];
+
+    int n = epoll_wait(js_epfd, events, 256, timeout_ms);
+    if (n < 0) {
+        return (errno == EINTR) ? 0 : -1;
+    }
+
+    for (int i = 0; i < n; i++) {
+        js_event_t *ev = events[i].data.ptr;
+        uint32_t e = events[i].events;
+
+        if (e & (EPOLLERR | EPOLLHUP)) {
+            if (ev->error) ev->error(ev);
+        } else {
+            if ((e & EPOLLOUT) && ev->write) ev->write(ev);
+            if ((e & EPOLLIN) && ev->read)   ev->read(ev);
+        }
+    }
+
+    return 0;
+}
+
 int js_timerfd_create(double seconds) {
     int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (tfd < 0) return -1;

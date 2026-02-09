@@ -291,6 +291,7 @@ void    js_epoll_close(void);
 int     js_epoll_add(js_event_t *ev, uint32_t events);
 int     js_epoll_mod(js_event_t *ev, uint32_t events);
 int     js_epoll_del(js_event_t *ev);
+int     js_epoll_poll(int timeout_ms);
 int     js_timerfd_create(double seconds);
 
 /* http_client.c */

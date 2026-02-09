@@ -16,7 +16,6 @@ typedef struct {
 /* ── Loop structure (opaque to other modules) ────────────────────────── */
 
 struct js_loop {
-    int             epfd;
     js_pending_t  **items;
     int             count;
     int             cap;
@@ -30,8 +29,7 @@ js_loop_t *js_loop_create(void) {
     js_loop_t *loop = calloc(1, sizeof(js_loop_t));
     if (!loop) return NULL;
 
-    loop->epfd = js_epoll_create();
-    if (loop->epfd < 0) {
+    if (js_epoll_create() < 0) {
         free(loop);
         return NULL;
     }
@@ -221,7 +219,6 @@ int js_loop_pending(js_loop_t *loop) {
 
 int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
     JSContext *pctx;
-    struct epoll_event events[64];
 
     for (;;) {
         /* 1. Drain all pending JS jobs */
@@ -245,24 +242,8 @@ int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
         /* 2. If no pending I/O, we're done */
         if (loop->count == 0) break;
 
-        /* 3. Wait for I/O events and dispatch through handlers */
-        int n = epoll_wait(loop->epfd, events, 64, 100);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-
-        for (int i = 0; i < n; i++) {
-            js_event_t *ev = events[i].data.ptr;
-            uint32_t e = events[i].events;
-
-            if (e & (EPOLLERR | EPOLLHUP)) {
-                if (ev->error) ev->error(ev);
-            } else {
-                if ((e & EPOLLOUT) && ev->write) ev->write(ev);
-                if ((e & EPOLLIN) && ev->read)   ev->read(ev);
-            }
-        }
+        /* 3. Poll for events and dispatch through handlers */
+        if (js_epoll_poll(100) < 0) break;
 
         /* 4. Check timeouts */
         uint64_t now = js_now_ns();

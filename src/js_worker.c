@@ -116,8 +116,7 @@ static void worker_on_error(js_event_t *ev) {
 static void worker_c_path(js_worker_t *w) {
     js_config_t *cfg = w->config;
 
-    int epfd = js_epoll_create();
-    if (epfd < 0) return;
+    if (js_epoll_create() < 0) return;
 
     /* Timer for duration */
     int tfd = -1;
@@ -166,26 +165,8 @@ static void worker_c_path(js_worker_t *w) {
     }
 
     /* Event loop */
-    struct epoll_event events[256];
-
     while (!atomic_load(&w->stop) && active > 0) {
-        int n = epoll_wait(epfd, events, 256, 100);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-
-        for (int i = 0; i < n; i++) {
-            js_event_t *ev = events[i].data.ptr;
-            uint32_t e = events[i].events;
-
-            if (e & (EPOLLERR | EPOLLHUP)) {
-                if (ev->error) ev->error(ev);
-            } else {
-                if ((e & EPOLLOUT) && ev->write) ev->write(ev);
-                if ((e & EPOLLIN) && ev->read)   ev->read(ev);
-            }
-        }
+        if (js_epoll_poll(100) < 0) break;
     }
 
     /* Cleanup */

@@ -1,10 +1,5 @@
 #include "js_main.h"
 
-/* Forward declarations for event handlers */
-static void conn_on_read(js_event_t *ev);
-static void conn_on_write(js_event_t *ev);
-static void conn_on_error(js_event_t *ev);
-
 js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
                              SSL_CTX *ssl_ctx, const char *hostname) {
     js_conn_t *c = calloc(1, sizeof(js_conn_t));
@@ -15,10 +10,6 @@ js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
         free(c);
         return NULL;
     }
-
-    c->socket.read  = conn_on_read;
-    c->socket.write = conn_on_write;
-    c->socket.error = conn_on_error;
 
     /* TCP_NODELAY */
     int one = 1;
@@ -141,9 +132,7 @@ static void conn_try_handshake(js_conn_t *c) {
     /* ret == 1: want more I/O, stay in TLS_HANDSHAKE */
 }
 
-static void conn_on_read(js_event_t *ev) {
-    js_conn_t *c = (js_conn_t *)ev;
-
+void js_conn_process_read(js_conn_t *c) {
     switch (c->state) {
         case CONN_TLS_HANDSHAKE:
             conn_try_handshake(c);
@@ -156,14 +145,12 @@ static void conn_on_read(js_event_t *ev) {
     }
 }
 
-static void conn_on_write(js_event_t *ev) {
-    js_conn_t *c = (js_conn_t *)ev;
-
+void js_conn_process_write(js_conn_t *c) {
     switch (c->state) {
         case CONN_CONNECTING: {
             int err = 0;
             socklen_t len = sizeof(err);
-            getsockopt(ev->fd, SOL_SOCKET, SO_ERROR, &err, &len);
+            getsockopt(c->socket.fd, SOL_SOCKET, SO_ERROR, &err, &len);
             if (err) {
                 c->state = CONN_ERROR;
                 return;
@@ -188,11 +175,6 @@ static void conn_on_write(js_event_t *ev) {
         default:
             return;
     }
-}
-
-static void conn_on_error(js_event_t *ev) {
-    js_conn_t *c = (js_conn_t *)ev;
-    c->state = CONN_ERROR;
 }
 
 bool js_conn_keepalive(const js_conn_t *c) {

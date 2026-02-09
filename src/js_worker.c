@@ -5,7 +5,110 @@
 static void timer_on_read(js_event_t *ev) {
     uint64_t expirations;
     (void)!read(ev->fd, &expirations, sizeof(expirations));
-    *(bool *)ev->data = true;
+    atomic_store((atomic_bool *)ev->data, true);
+}
+
+/* ── C-path connection handlers ──────────────────────────────────────── */
+
+static void worker_conn_process(js_conn_t *c) {
+    js_worker_t *w = c->udata;
+    js_config_t *cfg = w->config;
+
+    if (c->state == CONN_DONE) {
+        /* Record stats */
+        uint64_t elapsed_ns = js_now_ns() - c->start_ns;
+        double elapsed_us = (double)elapsed_ns / 1000.0;
+
+        w->stats.requests++;
+        w->stats.bytes_read += c->response.body_len;
+        js_hist_add(&w->stats.latency, elapsed_us);
+
+        int code = c->response.status_code;
+        if (code >= 200 && code < 300) w->stats.status_2xx++;
+        else if (code >= 300 && code < 400) w->stats.status_3xx++;
+        else if (code >= 400 && code < 500) w->stats.status_4xx++;
+        else if (code >= 500) w->stats.status_5xx++;
+
+        if (atomic_load(&w->stop)) return;
+
+        int next_idx = (c->req_index + 1) % cfg->request_count;
+        c->req_index = next_idx;
+
+        if (js_conn_keepalive(c)) {
+            /* Reuse connection: just reset parser, send next request */
+            js_conn_reuse(c);
+            js_conn_set_request(c, cfg->requests[next_idx].data,
+                                 cfg->requests[next_idx].len);
+            js_epoll_mod(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+        } else {
+            /* Server closed: reconnect */
+            js_epoll_del(&c->socket);
+            js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
+                          cfg->use_tls ? cfg->ssl_ctx : NULL,
+                          cfg->requests[0].url.host);
+
+            if (c->state == CONN_ERROR) {
+                w->stats.connect_errors++;
+                w->stats.errors++;
+                return;
+            }
+
+            js_conn_set_request(c, cfg->requests[next_idx].data,
+                                 cfg->requests[next_idx].len);
+            js_epoll_add(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+        }
+
+    } else if (c->state == CONN_ERROR) {
+        w->stats.errors++;
+        w->stats.connect_errors++;
+
+        if (atomic_load(&w->stop)) return;
+
+        /* Reconnect */
+        js_epoll_del(&c->socket);
+
+        int next_idx = c->req_index;
+        js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
+                      cfg->use_tls ? cfg->ssl_ctx : NULL,
+                      cfg->requests[0].url.host);
+
+        if (c->state == CONN_ERROR) {
+            w->stats.connect_errors++;
+            w->stats.errors++;
+            return;
+        }
+
+        js_conn_set_request(c, cfg->requests[next_idx].data,
+                             cfg->requests[next_idx].len);
+        js_epoll_add(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+    } else {
+        /* Still in progress, update epoll interest */
+        uint32_t mask = EPOLLET;
+        if (c->state == CONN_CONNECTING || c->state == CONN_WRITING ||
+            c->state == CONN_TLS_HANDSHAKE)
+            mask |= EPOLLOUT | EPOLLIN;
+        else
+            mask |= EPOLLIN;
+        js_epoll_mod(&c->socket, mask);
+    }
+}
+
+static void worker_on_read(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    js_conn_process_read(c);
+    worker_conn_process(c);
+}
+
+static void worker_on_write(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    js_conn_process_write(c);
+    worker_conn_process(c);
+}
+
+static void worker_on_error(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    c->state = CONN_ERROR;
+    worker_conn_process(c);
 }
 
 /* ── C-path worker: string/object/array modes ─────────────────────────── */
@@ -17,12 +120,11 @@ static void worker_c_path(js_worker_t *w) {
     if (epfd < 0) return;
 
     /* Timer for duration */
-    bool timer_expired = false;
     int tfd = -1;
 
     js_event_t timer_event = {
         .fd   = -1,
-        .data = &timer_expired,
+        .data = &w->stop,
         .read = timer_on_read,
     };
 
@@ -48,6 +150,11 @@ static void worker_c_path(js_worker_t *w) {
             continue;
         }
 
+        conns[i]->socket.read  = worker_on_read;
+        conns[i]->socket.write = worker_on_write;
+        conns[i]->socket.error = worker_on_error;
+        conns[i]->udata = w;
+
         /* Assign request (round-robin for array mode) */
         int req_idx = i % cfg->request_count;
         conns[i]->req_index = req_idx;
@@ -61,7 +168,7 @@ static void worker_c_path(js_worker_t *w) {
     /* Event loop */
     struct epoll_event events[256];
 
-    while (!timer_expired && !atomic_load(&w->stop) && active > 0) {
+    while (!atomic_load(&w->stop) && active > 0) {
         int n = epoll_wait(epfd, events, 256, 100);
         if (n < 0) {
             if (errno == EINTR) continue;
@@ -72,95 +179,11 @@ static void worker_c_path(js_worker_t *w) {
             js_event_t *ev = events[i].data.ptr;
             uint32_t e = events[i].events;
 
-            /* Dispatch through handlers */
             if (e & (EPOLLERR | EPOLLHUP)) {
                 if (ev->error) ev->error(ev);
             } else {
                 if ((e & EPOLLOUT) && ev->write) ev->write(ev);
                 if ((e & EPOLLIN) && ev->read)   ev->read(ev);
-            }
-
-            if (timer_expired) break;
-
-            /* Post-processing for connections */
-            js_conn_t *c = (js_conn_t *)ev;
-
-            if (c->state == CONN_DONE) {
-                /* Record stats */
-                uint64_t elapsed_ns = js_now_ns() - c->start_ns;
-                double elapsed_us = (double)elapsed_ns / 1000.0;
-
-                w->stats.requests++;
-                w->stats.bytes_read += c->response.body_len;
-                js_hist_add(&w->stats.latency, elapsed_us);
-
-                int code = c->response.status_code;
-                if (code >= 200 && code < 300) w->stats.status_2xx++;
-                else if (code >= 300 && code < 400) w->stats.status_3xx++;
-                else if (code >= 400 && code < 500) w->stats.status_4xx++;
-                else if (code >= 500) w->stats.status_5xx++;
-
-                if (timer_expired || atomic_load(&w->stop)) continue;
-
-                int next_idx = (c->req_index + 1) % cfg->request_count;
-                c->req_index = next_idx;
-
-                if (js_conn_keepalive(c)) {
-                    /* Reuse connection: just reset parser, send next request */
-                    js_conn_reuse(c);
-                    js_conn_set_request(c, cfg->requests[next_idx].data,
-                                         cfg->requests[next_idx].len);
-                    js_epoll_mod(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
-                } else {
-                    /* Server closed: reconnect */
-                    js_epoll_del(&c->socket);
-                    js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
-                                  cfg->use_tls ? cfg->ssl_ctx : NULL,
-                                  cfg->requests[0].url.host);
-
-                    if (c->state == CONN_ERROR) {
-                        w->stats.connect_errors++;
-                        w->stats.errors++;
-                        continue;
-                    }
-
-                    js_conn_set_request(c, cfg->requests[next_idx].data,
-                                         cfg->requests[next_idx].len);
-                    js_epoll_add(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
-                }
-
-            } else if (c->state == CONN_ERROR) {
-                w->stats.errors++;
-                w->stats.connect_errors++;
-
-                if (timer_expired || atomic_load(&w->stop)) continue;
-
-                /* Reconnect */
-                js_epoll_del(&c->socket);
-
-                int next_idx = c->req_index;
-                js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
-                              cfg->use_tls ? cfg->ssl_ctx : NULL,
-                              cfg->requests[0].url.host);
-
-                if (c->state == CONN_ERROR) {
-                    w->stats.connect_errors++;
-                    w->stats.errors++;
-                    continue;
-                }
-
-                js_conn_set_request(c, cfg->requests[next_idx].data,
-                                     cfg->requests[next_idx].len);
-                js_epoll_add(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
-            } else {
-                /* Still in progress, update epoll interest */
-                uint32_t mask = EPOLLET;
-                if (c->state == CONN_CONNECTING || c->state == CONN_WRITING ||
-                    c->state == CONN_TLS_HANDSHAKE)
-                    mask |= EPOLLOUT | EPOLLIN;
-                else
-                    mask |= EPOLLIN;
-                js_epoll_mod(&c->socket, mask);
             }
         }
     }

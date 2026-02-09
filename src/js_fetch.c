@@ -1,5 +1,7 @@
 #include "js_main.h"
 
+/* TODO: use config->target as base URL for relative fetch() paths */
+
 /* ── Headers class ────────────────────────────────────────────────────── */
 
 typedef struct {

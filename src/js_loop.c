@@ -10,6 +10,7 @@ typedef struct {
     JSValue      resolve;
     JSValue      reject;
     uint64_t     deadline_ns;
+    js_loop_t   *loop;
 } js_pending_t;
 
 /* ── Loop structure (opaque to other modules) ────────────────────────── */
@@ -58,44 +59,6 @@ void js_loop_free(js_loop_t *loop) {
     free(loop->items);
     js_epoll_close();
     free(loop);
-}
-
-/* ── Add a pending fetch ─────────────────────────────────────────────── */
-
-int js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
-                SSL_CTX *ssl_ctx, JSContext *ctx,
-                JSValue resolve, JSValue reject) {
-    /* Grow array if needed */
-    if (loop->count >= loop->cap) {
-        int new_cap = loop->cap * 2;
-        js_pending_t **new_items = realloc(loop->items,
-                                           sizeof(js_pending_t *) * (size_t)new_cap);
-        if (!new_items) return -1;
-        loop->items = new_items;
-        loop->cap = new_cap;
-    }
-
-    js_pending_t *p = calloc(1, sizeof(js_pending_t));
-    if (!p) return -1;
-
-    p->conn = conn;
-    p->raw_data = raw_data;
-    p->ssl_ctx = ssl_ctx;
-    p->ctx = ctx;
-    p->resolve = resolve;
-    p->reject = reject;
-    p->deadline_ns = js_now_ns() + (uint64_t)(30.0 * 1e9);  /* 30s timeout */
-
-    conn->udata = p;
-
-    js_epoll_add(&conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
-
-    loop->items[loop->count++] = p;
-    return 0;
-}
-
-int js_loop_pending(js_loop_t *loop) {
-    return loop->count;
 }
 
 /* ── Internal: remove pending at index (swap with last) ──────────────── */
@@ -162,6 +125,98 @@ static void pending_fail(js_loop_t *loop, js_pending_t *p, int idx,
     loop_remove(loop, idx);
 }
 
+/* ── Loop connection handlers ────────────────────────────────────────── */
+
+static void loop_conn_process(js_conn_t *c) {
+    js_pending_t *p = c->udata;
+    js_loop_t *loop = p->loop;
+
+    if (c->state == CONN_DONE) {
+        for (int i = 0; i < loop->count; i++) {
+            if (loop->items[i] == p) {
+                pending_complete(loop, p, i);
+                return;
+            }
+        }
+    } else if (c->state == CONN_ERROR) {
+        for (int i = 0; i < loop->count; i++) {
+            if (loop->items[i] == p) {
+                pending_fail(loop, p, i, "Connection error");
+                return;
+            }
+        }
+    } else {
+        /* Update epoll interest based on connection state */
+        uint32_t mask = EPOLLET;
+        if (c->state == CONN_CONNECTING || c->state == CONN_WRITING ||
+            c->state == CONN_TLS_HANDSHAKE)
+            mask |= EPOLLOUT | EPOLLIN;
+        else
+            mask |= EPOLLIN;
+        js_epoll_mod(&c->socket, mask);
+    }
+}
+
+static void loop_on_read(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    js_conn_process_read(c);
+    loop_conn_process(c);
+}
+
+static void loop_on_write(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    js_conn_process_write(c);
+    loop_conn_process(c);
+}
+
+static void loop_on_error(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    c->state = CONN_ERROR;
+    loop_conn_process(c);
+}
+
+/* ── Add a pending fetch ─────────────────────────────────────────────── */
+
+int js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
+                SSL_CTX *ssl_ctx, JSContext *ctx,
+                JSValue resolve, JSValue reject) {
+    /* Grow array if needed */
+    if (loop->count >= loop->cap) {
+        int new_cap = loop->cap * 2;
+        js_pending_t **new_items = realloc(loop->items,
+                                           sizeof(js_pending_t *) * (size_t)new_cap);
+        if (!new_items) return -1;
+        loop->items = new_items;
+        loop->cap = new_cap;
+    }
+
+    js_pending_t *p = calloc(1, sizeof(js_pending_t));
+    if (!p) return -1;
+
+    p->conn = conn;
+    p->raw_data = raw_data;
+    p->ssl_ctx = ssl_ctx;
+    p->ctx = ctx;
+    p->resolve = resolve;
+    p->reject = reject;
+    p->deadline_ns = js_now_ns() + (uint64_t)(30.0 * 1e9);  /* 30s timeout */
+    p->loop = loop;
+
+    conn->udata = p;
+    conn->socket.read  = loop_on_read;
+    conn->socket.write = loop_on_write;
+    conn->socket.error = loop_on_error;
+
+    js_epoll_add(&conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+
+    loop->items[loop->count++] = p;
+    return 0;
+}
+
+int js_loop_pending(js_loop_t *loop) {
+    return loop->count;
+}
+
 /* ── Run the event loop ──────────────────────────────────────────────── */
 
 int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
@@ -190,57 +245,26 @@ int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
         /* 2. If no pending I/O, we're done */
         if (loop->count == 0) break;
 
-        /* 3. Wait for I/O events */
+        /* 3. Wait for I/O events and dispatch through handlers */
         int n = epoll_wait(loop->epfd, events, 64, 100);
         if (n < 0) {
             if (errno == EINTR) continue;
             break;
         }
 
-        /* 4. Process events */
         for (int i = 0; i < n; i++) {
             js_event_t *ev = events[i].data.ptr;
             uint32_t e = events[i].events;
 
-            /* Dispatch through handlers */
             if (e & (EPOLLERR | EPOLLHUP)) {
                 if (ev->error) ev->error(ev);
             } else {
                 if ((e & EPOLLOUT) && ev->write) ev->write(ev);
                 if ((e & EPOLLIN) && ev->read)   ev->read(ev);
             }
-
-            js_conn_t *c = (js_conn_t *)ev;
-            js_pending_t *p = c->udata;
-
-            if (c->state == CONN_DONE) {
-                /* Find index in items array */
-                for (int j = 0; j < loop->count; j++) {
-                    if (loop->items[j] == p) {
-                        pending_complete(loop, p, j);
-                        break;
-                    }
-                }
-            } else if (c->state == CONN_ERROR) {
-                for (int j = 0; j < loop->count; j++) {
-                    if (loop->items[j] == p) {
-                        pending_fail(loop, p, j, "Connection error");
-                        break;
-                    }
-                }
-            } else {
-                /* Update epoll interest based on connection state */
-                uint32_t mask = EPOLLET;
-                if (c->state == CONN_CONNECTING || c->state == CONN_WRITING ||
-                    c->state == CONN_TLS_HANDSHAKE)
-                    mask |= EPOLLOUT | EPOLLIN;
-                else
-                    mask |= EPOLLIN;
-                js_epoll_mod(&c->socket, mask);
-            }
         }
 
-        /* 5. Check timeouts */
+        /* 4. Check timeouts */
         uint64_t now = js_now_ns();
         for (int i = loop->count - 1; i >= 0; i--) {
             if (now >= loop->items[i]->deadline_ns) {

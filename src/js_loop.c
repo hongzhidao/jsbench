@@ -16,6 +16,7 @@ typedef struct {
 /* ── Loop structure (opaque to other modules) ────────────────────────── */
 
 struct js_loop {
+    js_engine_t   *engine;
     js_pending_t  **items;
     int             count;
     int             cap;
@@ -29,7 +30,8 @@ js_loop_t *js_loop_create(void) {
     js_loop_t *loop = calloc(1, sizeof(js_loop_t));
     if (!loop) return NULL;
 
-    if (js_epoll_create() < 0) {
+    loop->engine = js_engine_create();
+    if (loop->engine == NULL) {
         free(loop);
         return NULL;
     }
@@ -55,7 +57,7 @@ void js_loop_free(js_loop_t *loop) {
     }
 
     free(loop->items);
-    js_epoll_close();
+    js_engine_destroy(loop->engine);
     free(loop);
 }
 
@@ -86,7 +88,7 @@ static void pending_complete(js_loop_t *loop, js_pending_t *p, int idx) {
     JS_FreeValue(ctx, response);
 
     /* Cleanup */
-    js_epoll_del(&conn->socket);
+    js_epoll_del(loop->engine, &conn->socket);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_conn_free(conn);
@@ -112,7 +114,7 @@ static void pending_fail(js_loop_t *loop, js_pending_t *p, int idx,
     JS_FreeValue(ctx, err);
 
     /* Cleanup */
-    js_epoll_del(&p->conn->socket);
+    js_epoll_del(loop->engine, &p->conn->socket);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_conn_free(p->conn);
@@ -151,7 +153,7 @@ static void loop_conn_process(js_conn_t *c) {
             mask |= EPOLLOUT | EPOLLIN;
         else
             mask |= EPOLLIN;
-        js_epoll_mod(&c->socket, mask);
+        js_epoll_mod(loop->engine, &c->socket, mask);
     }
 }
 
@@ -205,7 +207,7 @@ int js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
     conn->socket.write = loop_on_write;
     conn->socket.error = loop_on_error;
 
-    js_epoll_add(&conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+    js_epoll_add(loop->engine, &conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
 
     loop->items[loop->count++] = p;
     return 0;
@@ -243,7 +245,7 @@ int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
         if (loop->count == 0) break;
 
         /* 3. Poll for events and dispatch through handlers */
-        if (js_epoll_poll(100) < 0) break;
+        if (js_epoll_poll(loop->engine, 100) < 0) break;
 
         /* 4. Check timeouts */
         uint64_t now = js_now_ns();

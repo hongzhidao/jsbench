@@ -1,11 +1,10 @@
 #include "js_main.h"
 
-/* ── Timer event handler ─────────────────────────────────────────────── */
+/* ── Duration timer handler ──────────────────────────────────────────── */
 
-static void timer_on_read(js_event_t *ev) {
-    uint64_t expirations;
-    (void)!read(ev->fd, &expirations, sizeof(expirations));
-    atomic_store((atomic_bool *)ev->data, true);
+static void worker_duration_handler(js_timer_t *timer, void *data) {
+    atomic_bool *stop = data;
+    atomic_store(stop, true);
 }
 
 /* ── C-path connection handlers ──────────────────────────────────────── */
@@ -13,6 +12,7 @@ static void timer_on_read(js_event_t *ev) {
 static void worker_conn_process(js_conn_t *c) {
     js_worker_t *w = c->udata;
     js_config_t *cfg = w->config;
+    js_engine_t *engine = w->engine;
 
     if (c->state == CONN_DONE) {
         /* Record stats */
@@ -39,10 +39,10 @@ static void worker_conn_process(js_conn_t *c) {
             js_conn_reuse(c);
             js_conn_set_request(c, cfg->requests[next_idx].data,
                                  cfg->requests[next_idx].len);
-            js_epoll_mod(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+            js_epoll_mod(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
         } else {
             /* Server closed: reconnect */
-            js_epoll_del(&c->socket);
+            js_epoll_del(engine, &c->socket);
             js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
                           cfg->use_tls ? cfg->ssl_ctx : NULL,
                           cfg->requests[0].url.host);
@@ -55,7 +55,7 @@ static void worker_conn_process(js_conn_t *c) {
 
             js_conn_set_request(c, cfg->requests[next_idx].data,
                                  cfg->requests[next_idx].len);
-            js_epoll_add(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+            js_epoll_add(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
         }
 
     } else if (c->state == CONN_ERROR) {
@@ -65,7 +65,7 @@ static void worker_conn_process(js_conn_t *c) {
         if (atomic_load(&w->stop)) return;
 
         /* Reconnect */
-        js_epoll_del(&c->socket);
+        js_epoll_del(engine, &c->socket);
 
         int next_idx = c->req_index;
         js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
@@ -80,7 +80,7 @@ static void worker_conn_process(js_conn_t *c) {
 
         js_conn_set_request(c, cfg->requests[next_idx].data,
                              cfg->requests[next_idx].len);
-        js_epoll_add(&c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+        js_epoll_add(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
     } else {
         /* Still in progress, update epoll interest */
         uint32_t mask = EPOLLET;
@@ -89,7 +89,7 @@ static void worker_conn_process(js_conn_t *c) {
             mask |= EPOLLOUT | EPOLLIN;
         else
             mask |= EPOLLIN;
-        js_epoll_mod(&c->socket, mask);
+        js_epoll_mod(engine, &c->socket, mask);
     }
 }
 
@@ -116,23 +116,18 @@ static void worker_on_error(js_event_t *ev) {
 static void worker_c_path(js_worker_t *w) {
     js_config_t *cfg = w->config;
 
-    if (js_epoll_create() < 0) return;
+    js_engine_t *engine = js_engine_create();
+    if (engine == NULL) return;
+    w->engine = engine;
 
-    /* Timer for duration */
-    int tfd = -1;
-
-    js_event_t timer_event = {
-        .fd   = -1,
-        .data = &w->stop,
-        .read = timer_on_read,
-    };
+    /* Duration timer */
+    js_timer_t duration_timer = {0};
 
     if (cfg->duration_sec > 0) {
-        tfd = js_timerfd_create(cfg->duration_sec);
-        if (tfd >= 0) {
-            timer_event.fd = tfd;
-            js_epoll_add(&timer_event, EPOLLIN);
-        }
+        duration_timer.handler = worker_duration_handler;
+        duration_timer.data = &w->stop;
+        js_timer_add(&engine->timers, &duration_timer,
+                     (js_msec_t)(cfg->duration_sec * 1000));
     }
 
     /* Create connections */
@@ -160,13 +155,26 @@ static void worker_c_path(js_worker_t *w) {
         js_conn_set_request(conns[i], cfg->requests[req_idx].data,
                              cfg->requests[req_idx].len);
 
-        js_epoll_add(&conns[i]->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+        js_epoll_add(engine, &conns[i]->socket, EPOLLIN | EPOLLOUT | EPOLLET);
         active++;
     }
 
     /* Event loop */
     while (!atomic_load(&w->stop) && active > 0) {
-        if (js_epoll_poll(100) < 0) break;
+        js_msec_t timer_timeout = js_timer_find(&engine->timers);
+        int timeout;
+
+        if (timer_timeout == (js_msec_t) -1) {
+            timeout = 100;
+        } else {
+            timeout = (int) timer_timeout;
+            if (timeout > 100) timeout = 100;
+        }
+
+        if (js_epoll_poll(engine, timeout) < 0) break;
+
+        engine->timers.now = (js_msec_t) (js_now_ns() / 1000000);
+        js_timer_expire(&engine->timers, engine->timers.now);
     }
 
     /* Cleanup */
@@ -174,8 +182,7 @@ static void worker_c_path(js_worker_t *w) {
         if (conns[i]) js_conn_free(conns[i]);
     }
     free(conns);
-    if (tfd >= 0) close(tfd);
-    js_epoll_close();
+    js_engine_destroy(engine);
 }
 
 /* ── JS-path worker: async function mode ──────────────────────────────── */

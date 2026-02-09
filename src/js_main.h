@@ -5,7 +5,9 @@
 #include "js_clang.h"
 #include "js_time.h"
 #include "js_rbtree.h"
+#include "js_epoll.h"
 #include "js_timer.h"
+#include "js_engine.h"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -128,19 +130,6 @@ typedef struct {
     size_t             buf_cap;
 } js_http_response_t;
 
-/* ── Event (for epoll data.ptr dispatch) ──────────────────────────────── */
-
-typedef struct js_event_s  js_event_t;
-typedef void (*js_event_handler_t)(js_event_t *ev);
-
-struct js_event_s {
-    int                   fd;
-    void                 *data;
-    js_event_handler_t    read;
-    js_event_handler_t    write;
-    js_event_handler_t    error;
-};
-
 /* ── Connection state ─────────────────────────────────────────────────── */
 
 typedef enum {
@@ -222,6 +211,7 @@ typedef struct {
     js_stats_t     stats;
     pthread_t       thread;
     atomic_bool     stop;
+    js_engine_t   *engine;
 } js_worker_t;
 
 /* ── Event loop ──────────────────────────────────────────────────────── */
@@ -268,15 +258,6 @@ int      js_tls_handshake(SSL *ssl);
 ssize_t  js_tls_read(SSL *ssl, void *buf, size_t len);
 ssize_t  js_tls_write(SSL *ssl, const void *buf, size_t len);
 void     js_tls_free(SSL *ssl);
-
-/* epoll.c */
-int     js_epoll_create(void);
-void    js_epoll_close(void);
-int     js_epoll_add(js_event_t *ev, uint32_t events);
-int     js_epoll_mod(js_event_t *ev, uint32_t events);
-int     js_epoll_del(js_event_t *ev);
-int     js_epoll_poll(int timeout_ms);
-int     js_timerfd_create(double seconds);
 
 /* http_client.c */
 js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,

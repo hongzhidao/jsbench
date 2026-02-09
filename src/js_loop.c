@@ -56,7 +56,7 @@ void js_loop_free(js_loop_t *loop) {
     }
 
     free(loop->items);
-    if (loop->epfd >= 0) close(loop->epfd);
+    js_epoll_close();
     free(loop);
 }
 
@@ -88,7 +88,7 @@ int js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
 
     conn->udata = p;
 
-    js_epoll_add(loop->epfd, &conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+    js_epoll_add(&conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
 
     loop->items[loop->count++] = p;
     return 0;
@@ -125,7 +125,7 @@ static void pending_complete(js_loop_t *loop, js_pending_t *p, int idx) {
     JS_FreeValue(ctx, response);
 
     /* Cleanup */
-    js_epoll_del(loop->epfd, &conn->socket);
+    js_epoll_del(&conn->socket);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_conn_free(conn);
@@ -151,7 +151,7 @@ static void pending_fail(js_loop_t *loop, js_pending_t *p, int idx,
     JS_FreeValue(ctx, err);
 
     /* Cleanup */
-    js_epoll_del(loop->epfd, &p->conn->socket);
+    js_epoll_del(&p->conn->socket);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_conn_free(p->conn);
@@ -236,7 +236,7 @@ int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
                     mask |= EPOLLOUT | EPOLLIN;
                 else
                     mask |= EPOLLIN;
-                js_epoll_mod(loop->epfd, &c->socket, mask);
+                js_epoll_mod(&c->socket, mask);
             }
         }
 

@@ -287,9 +287,10 @@ void     js_tls_free(SSL *ssl);
 
 /* epoll.c */
 int     js_epoll_create(void);
-int     js_epoll_add(int epfd, js_event_t *ev, uint32_t events);
-int     js_epoll_mod(int epfd, js_event_t *ev, uint32_t events);
-int     js_epoll_del(int epfd, js_event_t *ev);
+void    js_epoll_close(void);
+int     js_epoll_add(js_event_t *ev, uint32_t events);
+int     js_epoll_mod(js_event_t *ev, uint32_t events);
+int     js_epoll_del(js_event_t *ev);
 int     js_timerfd_create(double seconds);
 
 /* http_client.c */

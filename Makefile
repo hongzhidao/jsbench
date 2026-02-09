@@ -12,6 +12,7 @@ SRCS := src/js_main.c src/js_util.c src/js_stats.c src/js_http_parser.c \
         src/js_tls.c src/js_epoll.c src/js_http_client.c src/js_fetch.c \
         src/js_loop.c src/js_vm.c src/js_cli.c src/js_worker.c src/js_bench.c
 OBJS := $(patsubst src/%.c,build/%.o,$(SRCS))
+DEPS := $(OBJS:.o=.d)
 
 BIN := jsb
 
@@ -26,7 +27,9 @@ $(BIN): $(OBJS) $(QJS_LIB)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 build/%.o: src/%.c $(QJS_LIB) | build
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+-include $(DEPS)
 
 build:
 	@mkdir -p build

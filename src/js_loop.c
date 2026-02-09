@@ -88,7 +88,7 @@ int js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
 
     conn->udata = p;
 
-    js_epoll_add(loop->epfd, conn->fd, EPOLLIN | EPOLLOUT | EPOLLET, conn);
+    js_epoll_add(loop->epfd, &conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
 
     loop->items[loop->count++] = p;
     return 0;
@@ -125,7 +125,7 @@ static void pending_complete(js_loop_t *loop, js_pending_t *p, int idx) {
     JS_FreeValue(ctx, response);
 
     /* Cleanup */
-    js_epoll_del(loop->epfd, conn->fd);
+    js_epoll_del(loop->epfd, &conn->socket);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_conn_free(conn);
@@ -151,7 +151,7 @@ static void pending_fail(js_loop_t *loop, js_pending_t *p, int idx,
     JS_FreeValue(ctx, err);
 
     /* Cleanup */
-    js_epoll_del(loop->epfd, p->conn->fd);
+    js_epoll_del(loop->epfd, &p->conn->socket);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_conn_free(p->conn);
@@ -199,9 +199,18 @@ int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
 
         /* 4. Process events */
         for (int i = 0; i < n; i++) {
-            js_conn_t *c = events[i].data.ptr;
-            js_conn_handle_event(c, events[i].events);
+            js_event_t *ev = events[i].data.ptr;
+            uint32_t e = events[i].events;
 
+            /* Dispatch through handlers */
+            if (e & (EPOLLERR | EPOLLHUP)) {
+                if (ev->error) ev->error(ev);
+            } else {
+                if ((e & EPOLLOUT) && ev->write) ev->write(ev);
+                if ((e & EPOLLIN) && ev->read)   ev->read(ev);
+            }
+
+            js_conn_t *c = (js_conn_t *)ev;
             js_pending_t *p = c->udata;
 
             if (c->state == CONN_DONE) {
@@ -221,13 +230,13 @@ int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
                 }
             } else {
                 /* Update epoll interest based on connection state */
-                uint32_t ev = EPOLLET;
+                uint32_t mask = EPOLLET;
                 if (c->state == CONN_CONNECTING || c->state == CONN_WRITING ||
                     c->state == CONN_TLS_HANDSHAKE)
-                    ev |= EPOLLOUT | EPOLLIN;
+                    mask |= EPOLLOUT | EPOLLIN;
                 else
-                    ev |= EPOLLIN;
-                js_epoll_mod(loop->epfd, c->fd, ev, c);
+                    mask |= EPOLLIN;
+                js_epoll_mod(loop->epfd, &c->socket, mask);
             }
         }
 

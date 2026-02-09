@@ -53,9 +53,9 @@ static void send_response(int fd, int status, const char *status_text,
         status, status_text, content_type, body_len,
         extra_headers ? extra_headers : "");
 
-    write(fd, header, (size_t)hlen);
+    (void)!write(fd, header, (size_t)hlen);
     if (body && body_len > 0)
-        write(fd, body, body_len);
+        (void)!write(fd, body, body_len);
 }
 
 static void send_chunked_response(int fd) {
@@ -65,19 +65,19 @@ static void send_chunked_response(int fd) {
         "Transfer-Encoding: chunked\r\n"
         "Connection: close\r\n"
         "\r\n";
-    write(fd, header, strlen(header));
+    (void)!write(fd, header, strlen(header));
 
     /* Send 3 chunks */
     const char *chunks[] = { "Hello, ", "chunked ", "world!" };
     for (int i = 0; i < 3; i++) {
         char chunk_header[32];
         int cl = snprintf(chunk_header, sizeof(chunk_header), "%zx\r\n", strlen(chunks[i]));
-        write(fd, chunk_header, (size_t)cl);
-        write(fd, chunks[i], strlen(chunks[i]));
-        write(fd, "\r\n", 2);
+        (void)!write(fd, chunk_header, (size_t)cl);
+        (void)!write(fd, chunks[i], strlen(chunks[i]));
+        (void)!write(fd, "\r\n", 2);
     }
     /* Final chunk */
-    write(fd, "0\r\n\r\n", 5);
+    (void)!write(fd, "0\r\n\r\n", 5);
 }
 
 /* ── Route handling ───────────────────────────────────────────────────── */

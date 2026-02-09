@@ -1,5 +1,13 @@
 #include "js_main.h"
 
+/* ── Timer event handler ─────────────────────────────────────────────── */
+
+static void timer_on_read(js_event_t *ev) {
+    uint64_t expirations;
+    (void)!read(ev->fd, &expirations, sizeof(expirations));
+    *(bool *)ev->data = true;
+}
+
 /* ── C-path worker: string/object/array modes ─────────────────────────── */
 
 static void worker_c_path(js_worker_t *w) {
@@ -8,10 +16,21 @@ static void worker_c_path(js_worker_t *w) {
     if (epfd < 0) return;
 
     /* Timer for duration */
+    bool timer_expired = false;
     int tfd = -1;
+
+    js_event_t timer_event = {
+        .fd   = -1,
+        .data = &timer_expired,
+        .read = timer_on_read,
+    };
+
     if (cfg->duration_sec > 0) {
         tfd = js_timerfd_create(cfg->duration_sec);
-        if (tfd >= 0) js_epoll_add(epfd, tfd, EPOLLIN, NULL);
+        if (tfd >= 0) {
+            timer_event.fd = tfd;
+            js_epoll_add(epfd, &timer_event, EPOLLIN);
+        }
     }
 
     /* Create connections */
@@ -34,13 +53,12 @@ static void worker_c_path(js_worker_t *w) {
         js_conn_set_request(conns[i], cfg->requests[req_idx].data,
                              cfg->requests[req_idx].len);
 
-        js_epoll_add(epfd, conns[i]->fd, EPOLLIN | EPOLLOUT | EPOLLET, conns[i]);
+        js_epoll_add(epfd, &conns[i]->socket, EPOLLIN | EPOLLOUT | EPOLLET);
         active++;
     }
 
     /* Event loop */
     struct epoll_event events[256];
-    bool timer_expired = false;
 
     while (!timer_expired && !atomic_load(&w->stop) && active > 0) {
         int n = epoll_wait(epfd, events, 256, 100);
@@ -50,16 +68,21 @@ static void worker_c_path(js_worker_t *w) {
         }
 
         for (int i = 0; i < n; i++) {
-            if (events[i].data.ptr == NULL) {
-                /* Timer fired */
-                uint64_t expirations;
-                (void)!read(tfd, &expirations, sizeof(expirations));
-                timer_expired = true;
-                break;
+            js_event_t *ev = events[i].data.ptr;
+            uint32_t e = events[i].events;
+
+            /* Dispatch through handlers */
+            if (e & (EPOLLERR | EPOLLHUP)) {
+                if (ev->error) ev->error(ev);
+            } else {
+                if ((e & EPOLLOUT) && ev->write) ev->write(ev);
+                if ((e & EPOLLIN) && ev->read)   ev->read(ev);
             }
 
-            js_conn_t *c = events[i].data.ptr;
-            js_conn_handle_event(c, events[i].events);
+            if (timer_expired) break;
+
+            /* Post-processing for connections */
+            js_conn_t *c = (js_conn_t *)ev;
 
             if (c->state == CONN_DONE) {
                 /* Record stats */
@@ -86,10 +109,10 @@ static void worker_c_path(js_worker_t *w) {
                     js_conn_reuse(c);
                     js_conn_set_request(c, cfg->requests[next_idx].data,
                                          cfg->requests[next_idx].len);
-                    js_epoll_mod(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
+                    js_epoll_mod(epfd, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
                 } else {
                     /* Server closed: reconnect */
-                    js_epoll_del(epfd, c->fd);
+                    js_epoll_del(epfd, &c->socket);
                     js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
                                   cfg->use_tls ? cfg->ssl_ctx : NULL,
                                   cfg->requests[0].url.host);
@@ -102,7 +125,7 @@ static void worker_c_path(js_worker_t *w) {
 
                     js_conn_set_request(c, cfg->requests[next_idx].data,
                                          cfg->requests[next_idx].len);
-                    js_epoll_add(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
+                    js_epoll_add(epfd, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
                 }
 
             } else if (c->state == CONN_ERROR) {
@@ -112,7 +135,7 @@ static void worker_c_path(js_worker_t *w) {
                 if (timer_expired || atomic_load(&w->stop)) continue;
 
                 /* Reconnect */
-                js_epoll_del(epfd, c->fd);
+                js_epoll_del(epfd, &c->socket);
 
                 int next_idx = c->req_index;
                 js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
@@ -127,16 +150,16 @@ static void worker_c_path(js_worker_t *w) {
 
                 js_conn_set_request(c, cfg->requests[next_idx].data,
                                      cfg->requests[next_idx].len);
-                js_epoll_add(epfd, c->fd, EPOLLIN | EPOLLOUT | EPOLLET, c);
+                js_epoll_add(epfd, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
             } else {
                 /* Still in progress, update epoll interest */
-                uint32_t ev = EPOLLET;
+                uint32_t mask = EPOLLET;
                 if (c->state == CONN_CONNECTING || c->state == CONN_WRITING ||
                     c->state == CONN_TLS_HANDSHAKE)
-                    ev |= EPOLLOUT | EPOLLIN;
+                    mask |= EPOLLOUT | EPOLLIN;
                 else
-                    ev |= EPOLLIN;
-                js_epoll_mod(epfd, c->fd, ev, c);
+                    mask |= EPOLLIN;
+                js_epoll_mod(epfd, &c->socket, mask);
             }
         }
     }

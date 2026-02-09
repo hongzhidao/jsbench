@@ -144,6 +144,19 @@ typedef struct {
     size_t             buf_cap;
 } js_http_response_t;
 
+/* ── Event (for epoll data.ptr dispatch) ──────────────────────────────── */
+
+typedef struct js_event_s  js_event_t;
+typedef void (*js_event_handler_t)(js_event_t *ev);
+
+struct js_event_s {
+    int                   fd;
+    void                 *data;
+    js_event_handler_t    read;
+    js_event_handler_t    write;
+    js_event_handler_t    error;
+};
+
 /* ── Connection state ─────────────────────────────────────────────────── */
 
 typedef enum {
@@ -156,7 +169,7 @@ typedef enum {
 } conn_state_t;
 
 typedef struct js_conn {
-    int              fd;
+    js_event_t       socket;  /* must be first: cast js_event_t* → js_conn_t* */
     conn_state_t     state;
     SSL             *ssl;
 
@@ -274,9 +287,9 @@ void     js_tls_free(SSL *ssl);
 
 /* epoll.c */
 int     js_epoll_create(void);
-int     js_epoll_add(int epfd, int fd, uint32_t events, void *ptr);
-int     js_epoll_mod(int epfd, int fd, uint32_t events, void *ptr);
-int     js_epoll_del(int epfd, int fd);
+int     js_epoll_add(int epfd, js_event_t *ev, uint32_t events);
+int     js_epoll_mod(int epfd, js_event_t *ev, uint32_t events);
+int     js_epoll_del(int epfd, js_event_t *ev);
 int     js_timerfd_create(double seconds);
 
 /* http_client.c */
@@ -284,7 +297,6 @@ js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
                              SSL_CTX *ssl_ctx, const char *hostname);
 void        js_conn_free(js_conn_t *c);
 int         js_conn_set_request(js_conn_t *c, const char *data, size_t len);
-int         js_conn_handle_event(js_conn_t *c, uint32_t events);
 void        js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
                            socklen_t addr_len, SSL_CTX *ssl_ctx,
                            const char *hostname);

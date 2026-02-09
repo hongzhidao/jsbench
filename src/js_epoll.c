@@ -4,24 +4,24 @@ int js_epoll_create(void) {
     return epoll_create1(EPOLL_CLOEXEC);
 }
 
-int js_epoll_add(int epfd, int fd, uint32_t events, void *ptr) {
-    struct epoll_event ev = {
+int js_epoll_add(int epfd, js_event_t *ev, uint32_t events) {
+    struct epoll_event e = {
         .events = events,
-        .data.ptr = ptr
+        .data.ptr = ev
     };
-    return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
+    return epoll_ctl(epfd, EPOLL_CTL_ADD, ev->fd, &e);
 }
 
-int js_epoll_mod(int epfd, int fd, uint32_t events, void *ptr) {
-    struct epoll_event ev = {
+int js_epoll_mod(int epfd, js_event_t *ev, uint32_t events) {
+    struct epoll_event e = {
         .events = events,
-        .data.ptr = ptr
+        .data.ptr = ev
     };
-    return epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
+    return epoll_ctl(epfd, EPOLL_CTL_MOD, ev->fd, &e);
 }
 
-int js_epoll_del(int epfd, int fd) {
-    return epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+int js_epoll_del(int epfd, js_event_t *ev) {
+    return epoll_ctl(epfd, EPOLL_CTL_DEL, ev->fd, NULL);
 }
 
 int js_timerfd_create(double seconds) {

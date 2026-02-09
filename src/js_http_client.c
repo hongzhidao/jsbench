@@ -1,25 +1,34 @@
 #include "js_main.h"
 
+/* Forward declarations for event handlers */
+static void conn_on_read(js_event_t *ev);
+static void conn_on_write(js_event_t *ev);
+static void conn_on_error(js_event_t *ev);
+
 js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
                              SSL_CTX *ssl_ctx, const char *hostname) {
     js_conn_t *c = calloc(1, sizeof(js_conn_t));
     if (!c) return NULL;
 
-    c->fd = socket(addr->sa_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (c->fd < 0) {
+    c->socket.fd = socket(addr->sa_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (c->socket.fd < 0) {
         free(c);
         return NULL;
     }
 
+    c->socket.read  = conn_on_read;
+    c->socket.write = conn_on_write;
+    c->socket.error = conn_on_error;
+
     /* TCP_NODELAY */
     int one = 1;
-    setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    setsockopt(c->socket.fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
     js_http_response_init(&c->response);
 
-    int ret = connect(c->fd, addr, addr_len);
+    int ret = connect(c->socket.fd, addr, addr_len);
     if (ret < 0 && errno != EINPROGRESS) {
-        close(c->fd);
+        close(c->socket.fd);
         js_http_response_free(&c->response);
         free(c);
         return NULL;
@@ -29,7 +38,7 @@ js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
     c->start_ns = js_now_ns();
 
     if (ssl_ctx) {
-        c->ssl = js_tls_new(ssl_ctx, c->fd, hostname);
+        c->ssl = js_tls_new(ssl_ctx, c->socket.fd, hostname);
     }
 
     return c;
@@ -38,7 +47,7 @@ js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
 void js_conn_free(js_conn_t *c) {
     if (!c) return;
     if (c->ssl) js_tls_free(c->ssl);
-    if (c->fd >= 0) close(c->fd);
+    if (c->socket.fd >= 0) close(c->socket.fd);
     js_http_response_free(&c->response);
     free(c);
 }
@@ -57,7 +66,7 @@ static int conn_do_write(js_conn_t *c) {
             n = js_tls_write(c->ssl, c->req_data + c->req_sent,
                               c->req_len - c->req_sent);
         } else {
-            n = write(c->fd, c->req_data + c->req_sent,
+            n = write(c->socket.fd, c->req_data + c->req_sent,
                       c->req_len - c->req_sent);
         }
 
@@ -85,7 +94,7 @@ static int conn_do_read(js_conn_t *c) {
         if (c->ssl) {
             n = js_tls_read(c->ssl, buf, sizeof(buf));
         } else {
-            n = read(c->fd, buf, sizeof(buf));
+            n = read(c->socket.fd, buf, sizeof(buf));
         }
 
         if (n < 0) {
@@ -121,52 +130,69 @@ static int conn_do_read(js_conn_t *c) {
     }
 }
 
-int js_conn_handle_event(js_conn_t *c, uint32_t events) {
-    if (events & (EPOLLERR | EPOLLHUP)) {
+static void conn_try_handshake(js_conn_t *c) {
+    int ret = js_tls_handshake(c->ssl);
+    if (ret == 0) {
+        c->state = CONN_WRITING;
+        conn_do_write(c);
+    } else if (ret < 0) {
         c->state = CONN_ERROR;
-        return -1;
     }
+    /* ret == 1: want more I/O, stay in TLS_HANDSHAKE */
+}
+
+static void conn_on_read(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+
+    switch (c->state) {
+        case CONN_TLS_HANDSHAKE:
+            conn_try_handshake(c);
+            return;
+        case CONN_READING:
+            conn_do_read(c);
+            return;
+        default:
+            return;
+    }
+}
+
+static void conn_on_write(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
 
     switch (c->state) {
         case CONN_CONNECTING: {
-            /* Check connect result */
             int err = 0;
             socklen_t len = sizeof(err);
-            getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &err, &len);
+            getsockopt(ev->fd, SOL_SOCKET, SO_ERROR, &err, &len);
             if (err) {
                 c->state = CONN_ERROR;
-                return -1;
+                return;
             }
 
             if (c->ssl) {
                 c->state = CONN_TLS_HANDSHAKE;
-                /* Fall through to handshake */
-            } else {
-                c->state = CONN_WRITING;
-                return conn_do_write(c);
+                conn_try_handshake(c);
+                return;
             }
-        }
-        /* fallthrough */
-        case CONN_TLS_HANDSHAKE: {
-            int ret = js_tls_handshake(c->ssl);
-            if (ret == 0) {
-                c->state = CONN_WRITING;
-                return conn_do_write(c);
-            }
-            if (ret == 1) return 0;  /* try again */
-            c->state = CONN_ERROR;
-            return -1;
-        }
 
+            c->state = CONN_WRITING;
+            conn_do_write(c);
+            return;
+        }
+        case CONN_TLS_HANDSHAKE:
+            conn_try_handshake(c);
+            return;
         case CONN_WRITING:
-            return conn_do_write(c);
-
-        case CONN_READING:
-            return conn_do_read(c);
-
+            conn_do_write(c);
+            return;
         default:
-            return 0;
+            return;
     }
+}
+
+static void conn_on_error(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    c->state = CONN_ERROR;
 }
 
 bool js_conn_keepalive(const js_conn_t *c) {
@@ -194,25 +220,25 @@ void js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
         js_tls_free(c->ssl);
         c->ssl = NULL;
     }
-    if (c->fd >= 0) close(c->fd);
+    if (c->socket.fd >= 0) close(c->socket.fd);
 
     /* Reset response parser */
     js_http_response_reset(&c->response);
 
     /* New socket */
-    c->fd = socket(addr->sa_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (c->fd < 0) {
+    c->socket.fd = socket(addr->sa_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (c->socket.fd < 0) {
         c->state = CONN_ERROR;
         return;
     }
 
     int one = 1;
-    setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    setsockopt(c->socket.fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
-    int ret = connect(c->fd, addr, addr_len);
+    int ret = connect(c->socket.fd, addr, addr_len);
     if (ret < 0 && errno != EINPROGRESS) {
-        close(c->fd);
-        c->fd = -1;
+        close(c->socket.fd);
+        c->socket.fd = -1;
         c->state = CONN_ERROR;
         return;
     }
@@ -222,6 +248,6 @@ void js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
     c->start_ns = js_now_ns();
 
     if (ssl_ctx) {
-        c->ssl = js_tls_new(ssl_ctx, c->fd, hostname);
+        c->ssl = js_tls_new(ssl_ctx, c->socket.fd, hostname);
     }
 }

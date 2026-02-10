@@ -10,6 +10,8 @@ AI 写了一个类似 wrk 的可编程压测工具，测试全过，能跑。但
 2. [重构 AI 生成的 C 代码：一个 nginx 工程师的标准](02-architecture-is-everything-in-ai-era.zh.md)
 3. [AI 写的代码全部通过测试，但每个请求都失败了](03-improving-architecture-by-solving-problems.zh.md)
 4. [好的架构就是刚刚好：不多不少](04-what-is-good-architecture.zh.md)
+5. [AI 盖楼很快，但图纸得人来画](05-event-engine-refactoring.zh.md)
+6. [功能没变，但引擎造好了](06-building-the-work-engine.zh.md)
 
 ---
 
@@ -25,3 +27,5 @@ AI built a programmable alternative to wrk. Tests passed. It ran. But look close
 2. [Refactoring AI-Generated C: An nginx Engineer's Standards](02-architecture-is-everything-in-ai-era.en.md)
 3. [AI Code Passed Every Test, but Every Request Failed](03-improving-architecture-by-solving-problems.en.md)
 4. [Good Architecture Is Just Enough — No More, No Less](04-what-is-good-architecture.en.md)
+5. [AI Builds Fast, but Humans Draw the Blueprints](05-event-engine-refactoring.en.md)
+6. [Nothing Changed, but the Engine Is Built](06-building-the-work-engine.en.md)

@@ -168,6 +168,8 @@ typedef struct js_conn {
     void            *udata;
 } js_conn_t;
 
+#include "js_conn.h"
+
 /* ── Benchmark mode ───────────────────────────────────────────────────── */
 
 typedef enum {
@@ -273,7 +275,6 @@ void        js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
                            const char *hostname);
 bool        js_conn_keepalive(const js_conn_t *c);
 void        js_conn_reuse(js_conn_t *c);
-int         js_conn_process_read(js_conn_t *c);
 void        js_conn_process_write(js_conn_t *c);
 
 /* loop.c */

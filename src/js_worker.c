@@ -95,7 +95,7 @@ static void worker_conn_process(js_conn_t *c) {
 
 static void worker_on_read(js_event_t *ev) {
     js_conn_t *c = (js_conn_t *)ev;
-    int rc = js_conn_process_read(c);
+    int rc = js_conn_read(c);
 
     if (c->state == CONN_READING && c->in.len > 0) {
         int ret = js_http_response_feed(&c->response, c->in.data, c->in.len);

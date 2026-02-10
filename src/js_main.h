@@ -1,6 +1,10 @@
 #ifndef JS_H
 #define JS_H
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include "quickjs.h"
+
 #include "js_unix.h"
 #include "js_clang.h"
 #include "js_time.h"
@@ -9,11 +13,7 @@
 #include "js_timer.h"
 #include "js_engine.h"
 #include "js_buf.h"
-
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-
-#include "quickjs.h"
+#include "js_conn.h"
 
 /* ── Constants ────────────────────────────────────────────────────────── */
 
@@ -130,42 +130,6 @@ typedef struct {
     size_t             buf_len;
     size_t             buf_cap;
 } js_http_response_t;
-
-/* ── Connection state ─────────────────────────────────────────────────── */
-
-typedef enum {
-    CONN_CONNECTING,
-    CONN_TLS_HANDSHAKE,
-    CONN_WRITING,
-    CONN_READING,
-    CONN_DONE,
-    CONN_ERROR
-} conn_state_t;
-
-typedef struct js_conn {
-    js_event_t       socket;  /* must be first: cast js_event_t* → js_conn_t* */
-    conn_state_t     state;
-    SSL             *ssl;
-
-    /* Request data */
-    const char      *req_data;
-    size_t           req_len;
-    size_t           req_sent;
-
-    /* Read buffer */
-    js_buf_t         in;
-
-    /* Timing */
-    uint64_t         start_ns;
-
-    /* For round-robin in array mode */
-    int              req_index;
-
-    /* User data (for JS callbacks etc.) */
-    void            *udata;
-} js_conn_t;
-
-#include "js_conn.h"
 
 /* ── Benchmark mode ───────────────────────────────────────────────────── */
 

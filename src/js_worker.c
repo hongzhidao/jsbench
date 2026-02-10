@@ -95,7 +95,29 @@ static void worker_conn_process(js_conn_t *c) {
 
 static void worker_on_read(js_event_t *ev) {
     js_conn_t *c = (js_conn_t *)ev;
-    js_conn_process_read(c);
+    int rc = js_conn_process_read(c);
+
+    if (c->state == CONN_READING && c->in.len > 0) {
+        int ret = js_http_response_feed(&c->response, c->in.data, c->in.len);
+        js_buf_reset(&c->in);
+
+        if (ret == 1) {
+            c->state = CONN_DONE;
+        } else if (ret < 0) {
+            c->state = CONN_ERROR;
+        }
+    }
+
+    if (rc == 1 && c->state == CONN_READING) {
+        /* Peer closed before HTTP response complete */
+        if (c->response.state == HTTP_PARSE_BODY_IDENTITY ||
+            c->response.body_len > 0) {
+            c->state = CONN_DONE;
+        } else {
+            c->state = CONN_ERROR;
+        }
+    }
+
     worker_conn_process(c);
 }
 

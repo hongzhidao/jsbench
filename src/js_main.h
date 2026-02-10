@@ -8,6 +8,7 @@
 #include "js_epoll.h"
 #include "js_timer.h"
 #include "js_engine.h"
+#include "js_buf.h"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -151,6 +152,9 @@ typedef struct js_conn {
     size_t           req_len;
     size_t           req_sent;
 
+    /* Read buffer */
+    js_buf_t             in;
+
     /* Response parser */
     js_http_response_t response;
 
@@ -269,7 +273,7 @@ void        js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
                            const char *hostname);
 bool        js_conn_keepalive(const js_conn_t *c);
 void        js_conn_reuse(js_conn_t *c);
-void        js_conn_process_read(js_conn_t *c);
+int         js_conn_process_read(js_conn_t *c);
 void        js_conn_process_write(js_conn_t *c);
 
 /* loop.c */

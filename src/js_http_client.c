@@ -39,6 +39,7 @@ void js_conn_free(js_conn_t *c) {
     if (!c) return;
     if (c->ssl) js_tls_free(c->ssl);
     if (c->socket.fd >= 0) close(c->socket.fd);
+    js_buf_free(&c->in);
     js_http_response_free(&c->response);
     free(c);
 }
@@ -78,14 +79,19 @@ static int conn_do_write(js_conn_t *c) {
 }
 
 static int conn_do_read(js_conn_t *c) {
-    char buf[JS_READ_BUF_SIZE];
+    js_buf_t *in = &c->in;
 
     for (;;) {
+        if (js_buf_ensure(in, in->len + JS_READ_BUF_SIZE) < 0) {
+            c->state = CONN_ERROR;
+            return -1;
+        }
+
         ssize_t n;
         if (c->ssl) {
-            n = js_tls_read(c->ssl, buf, sizeof(buf));
+            n = js_tls_read(c->ssl, in->data + in->len, in->cap - in->len);
         } else {
-            n = read(c->socket.fd, buf, sizeof(buf));
+            n = read(c->socket.fd, in->data + in->len, in->cap - in->len);
         }
 
         if (n < 0) {
@@ -94,30 +100,10 @@ static int conn_do_read(js_conn_t *c) {
             return -1;
         }
         if (n == 0) {
-            /* Connection closed by peer */
-            if (c->response.state != HTTP_PARSE_DONE) {
-                /* If we were reading an identity body with no content-length, treat as done */
-                if (c->response.state == HTTP_PARSE_BODY_IDENTITY ||
-                    c->response.body_len > 0) {
-                    c->state = CONN_DONE;
-                    return 1;
-                }
-                c->state = CONN_ERROR;
-                return -1;
-            }
-            c->state = CONN_DONE;
-            return 1;
+            return 1;  /* peer closed */
         }
 
-        int ret = js_http_response_feed(&c->response, buf, (size_t)n);
-        if (ret == 1) {
-            c->state = CONN_DONE;
-            return 1;
-        }
-        if (ret < 0) {
-            c->state = CONN_ERROR;
-            return -1;
-        }
+        in->len += (size_t)n;
     }
 }
 
@@ -132,16 +118,15 @@ static void conn_try_handshake(js_conn_t *c) {
     /* ret == 1: want more I/O, stay in TLS_HANDSHAKE */
 }
 
-void js_conn_process_read(js_conn_t *c) {
+int js_conn_process_read(js_conn_t *c) {
     switch (c->state) {
         case CONN_TLS_HANDSHAKE:
             conn_try_handshake(c);
-            return;
+            return 0;
         case CONN_READING:
-            conn_do_read(c);
-            return;
+            return conn_do_read(c);
         default:
-            return;
+            return 0;
     }
 }
 
@@ -188,6 +173,7 @@ bool js_conn_keepalive(const js_conn_t *c) {
 
 void js_conn_reuse(js_conn_t *c) {
     /* Reuse existing connection: just reset parser and timing */
+    js_buf_reset(&c->in);
     js_http_response_reset(&c->response);
     c->state = CONN_WRITING;
     c->req_sent = 0;
@@ -204,7 +190,8 @@ void js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
     }
     if (c->socket.fd >= 0) close(c->socket.fd);
 
-    /* Reset response parser */
+    /* Reset buffers and parser */
+    js_buf_reset(&c->in);
     js_http_response_reset(&c->response);
 
     /* New socket */

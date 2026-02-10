@@ -15,12 +15,9 @@ js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
     int one = 1;
     setsockopt(c->socket.fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
-    js_http_response_init(&c->response);
-
     int ret = connect(c->socket.fd, addr, addr_len);
     if (ret < 0 && errno != EINPROGRESS) {
         close(c->socket.fd);
-        js_http_response_free(&c->response);
         free(c);
         return NULL;
     }
@@ -40,7 +37,6 @@ void js_conn_free(js_conn_t *c) {
     if (c->ssl) js_tls_free(c->ssl);
     if (c->socket.fd >= 0) close(c->socket.fd);
     js_buf_free(&c->in);
-    js_http_response_free(&c->response);
     free(c);
 }
 
@@ -121,19 +117,9 @@ void js_conn_process_write(js_conn_t *c) {
     }
 }
 
-bool js_conn_keepalive(const js_conn_t *c) {
-    /* Check if server indicated keep-alive.
-     * HTTP/1.1 defaults to keep-alive unless "Connection: close" is sent. */
-    const char *conn_hdr = js_http_response_header(&c->response, "Connection");
-    if (conn_hdr && strcasecmp(conn_hdr, "close") == 0)
-        return false;
-    return true;
-}
-
 void js_conn_reuse(js_conn_t *c) {
-    /* Reuse existing connection: just reset parser and timing */
+    /* Reuse existing connection: reset buffer and timing */
     js_buf_reset(&c->in);
-    js_http_response_reset(&c->response);
     c->state = CONN_WRITING;
     c->req_sent = 0;
     c->start_ns = js_now_ns();
@@ -149,9 +135,8 @@ void js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
     }
     if (c->socket.fd >= 0) close(c->socket.fd);
 
-    /* Reset buffers and parser */
+    /* Reset buffer */
     js_buf_reset(&c->in);
-    js_http_response_reset(&c->response);
 
     /* New socket */
     c->socket.fd = socket(addr->sa_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);

@@ -3,14 +3,15 @@
 /* ── Pending fetch operation ─────────────────────────────────────────── */
 
 typedef struct {
-    js_conn_t   *conn;
-    char        *raw_data;      /* serialized HTTP request (conn->req_data points here) */
-    SSL_CTX     *ssl_ctx;       /* TLS context, NULL for plain HTTP */
-    JSContext   *ctx;
-    JSValue      resolve;
-    JSValue      reject;
-    uint64_t     deadline_ns;
-    js_loop_t   *loop;
+    js_conn_t           *conn;
+    js_http_response_t   response;
+    char                *raw_data;      /* serialized HTTP request (conn->req_data points here) */
+    SSL_CTX             *ssl_ctx;       /* TLS context, NULL for plain HTTP */
+    JSContext           *ctx;
+    JSValue              resolve;
+    JSValue              reject;
+    uint64_t             deadline_ns;
+    js_loop_t           *loop;
 } js_pending_t;
 
 /* ── Loop structure (opaque to other modules) ────────────────────────── */
@@ -48,6 +49,7 @@ void js_loop_free(js_loop_t *loop) {
     /* Clean up any remaining pending operations */
     for (int i = 0; i < loop->count; i++) {
         js_pending_t *p = loop->items[i];
+        js_http_response_free(&p->response);
         js_conn_free(p->conn);
         free(p->raw_data);
         if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
@@ -73,15 +75,16 @@ static void loop_remove(js_loop_t *loop, int idx) {
 
 static void pending_complete(js_loop_t *loop, js_pending_t *p, int idx) {
     js_conn_t *conn = p->conn;
+    js_http_response_t *r = &p->response;
     JSContext *ctx = p->ctx;
 
     /* Build Response object and resolve the promise */
     JSValue response = js_response_new(ctx,
-        conn->response.status_code,
-        conn->response.status_text,
-        conn->response.body,
-        conn->response.body_len,
-        &conn->response);
+        r->status_code,
+        r->status_text,
+        r->body,
+        r->body_len,
+        r);
 
     JSValue ret = JS_Call(ctx, p->resolve, JS_UNDEFINED, 1, &response);
     JS_FreeValue(ctx, ret);
@@ -91,6 +94,7 @@ static void pending_complete(js_loop_t *loop, js_pending_t *p, int idx) {
     js_epoll_del(loop->engine, &conn->socket);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
+    js_http_response_free(r);
     js_conn_free(conn);
     free(p->raw_data);
     if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
@@ -159,10 +163,11 @@ static void loop_conn_process(js_conn_t *c) {
 
 static void loop_on_read(js_event_t *ev) {
     js_conn_t *c = (js_conn_t *)ev;
+    js_http_response_t *r = c->socket.data;
     int rc = js_conn_read(c);
 
     if (c->state == CONN_READING && c->in.len > 0) {
-        int ret = js_http_response_feed(&c->response, c->in.data, c->in.len);
+        int ret = js_http_response_feed(r, c->in.data, c->in.len);
         js_buf_reset(&c->in);
 
         if (ret == 1) {
@@ -174,8 +179,8 @@ static void loop_on_read(js_event_t *ev) {
 
     if (rc == 1 && c->state == CONN_READING) {
         /* Peer closed before HTTP response complete */
-        if (c->response.state == HTTP_PARSE_BODY_IDENTITY ||
-            c->response.body_len > 0) {
+        if (r->state == HTTP_PARSE_BODY_IDENTITY ||
+            r->body_len > 0) {
             c->state = CONN_DONE;
         } else {
             c->state = CONN_ERROR;
@@ -214,6 +219,9 @@ int js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
 
     js_pending_t *p = calloc(1, sizeof(js_pending_t));
     if (!p) return -1;
+
+    js_http_response_init(&p->response);
+    conn->socket.data = &p->response;
 
     p->conn = conn;
     p->raw_data = raw_data;

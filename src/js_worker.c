@@ -9,8 +9,16 @@ static void worker_duration_handler(js_timer_t *timer, void *data) {
 
 /* ── C-path connection handlers ──────────────────────────────────────── */
 
+static bool worker_keepalive(js_http_response_t *r) {
+    const char *conn_hdr = js_http_response_header(r, "Connection");
+    if (conn_hdr && strcasecmp(conn_hdr, "close") == 0)
+        return false;
+    return true;
+}
+
 static void worker_conn_process(js_conn_t *c) {
     js_worker_t *w = c->udata;
+    js_http_response_t *r = c->socket.data;
     js_config_t *cfg = w->config;
     js_engine_t *engine = w->engine;
 
@@ -20,10 +28,10 @@ static void worker_conn_process(js_conn_t *c) {
         double elapsed_us = (double)elapsed_ns / 1000.0;
 
         w->stats.requests++;
-        w->stats.bytes_read += c->response.body_len;
+        w->stats.bytes_read += r->body_len;
         js_hist_add(&w->stats.latency, elapsed_us);
 
-        int code = c->response.status_code;
+        int code = r->status_code;
         if (code >= 200 && code < 300) w->stats.status_2xx++;
         else if (code >= 300 && code < 400) w->stats.status_3xx++;
         else if (code >= 400 && code < 500) w->stats.status_4xx++;
@@ -34,8 +42,9 @@ static void worker_conn_process(js_conn_t *c) {
         int next_idx = (c->req_index + 1) % cfg->request_count;
         c->req_index = next_idx;
 
-        if (js_conn_keepalive(c)) {
-            /* Reuse connection: just reset parser, send next request */
+        if (worker_keepalive(r)) {
+            /* Reuse connection: reset parser, send next request */
+            js_http_response_reset(r);
             js_conn_reuse(c);
             js_conn_set_request(c, cfg->requests[next_idx].data,
                                  cfg->requests[next_idx].len);
@@ -95,10 +104,11 @@ static void worker_conn_process(js_conn_t *c) {
 
 static void worker_on_read(js_event_t *ev) {
     js_conn_t *c = (js_conn_t *)ev;
+    js_http_response_t *r = c->socket.data;
     int rc = js_conn_read(c);
 
     if (c->state == CONN_READING && c->in.len > 0) {
-        int ret = js_http_response_feed(&c->response, c->in.data, c->in.len);
+        int ret = js_http_response_feed(r, c->in.data, c->in.len);
         js_buf_reset(&c->in);
 
         if (ret == 1) {
@@ -110,8 +120,8 @@ static void worker_on_read(js_event_t *ev) {
 
     if (rc == 1 && c->state == CONN_READING) {
         /* Peer closed before HTTP response complete */
-        if (c->response.state == HTTP_PARSE_BODY_IDENTITY ||
-            c->response.body_len > 0) {
+        if (r->state == HTTP_PARSE_BODY_IDENTITY ||
+            r->body_len > 0) {
             c->state = CONN_DONE;
         } else {
             c->state = CONN_ERROR;
@@ -154,6 +164,8 @@ static void worker_c_path(js_worker_t *w) {
 
     /* Create connections */
     js_conn_t **conns = calloc((size_t)w->conn_count, sizeof(js_conn_t *));
+    js_http_response_t *responses = calloc((size_t)w->conn_count,
+                                            sizeof(js_http_response_t));
     int active = 0;
 
     for (int i = 0; i < w->conn_count; i++) {
@@ -166,6 +178,8 @@ static void worker_c_path(js_worker_t *w) {
             continue;
         }
 
+        js_http_response_init(&responses[i]);
+        conns[i]->socket.data  = &responses[i];
         conns[i]->socket.read  = worker_on_read;
         conns[i]->socket.write = worker_on_write;
         conns[i]->socket.error = worker_on_error;
@@ -201,8 +215,10 @@ static void worker_c_path(js_worker_t *w) {
 
     /* Cleanup */
     for (int i = 0; i < w->conn_count; i++) {
+        js_http_response_free(&responses[i]);
         if (conns[i]) js_conn_free(conns[i]);
     }
+    free(responses);
     free(conns);
     js_engine_destroy(engine);
 }

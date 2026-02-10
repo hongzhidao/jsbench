@@ -153,10 +153,7 @@ typedef struct js_conn {
     size_t           req_sent;
 
     /* Read buffer */
-    js_buf_t             in;
-
-    /* Response parser */
-    js_http_response_t response;
+    js_buf_t         in;
 
     /* Timing */
     uint64_t         start_ns;
@@ -273,7 +270,6 @@ int         js_conn_set_request(js_conn_t *c, const char *data, size_t len);
 void        js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
                            socklen_t addr_len, SSL_CTX *ssl_ctx,
                            const char *hostname);
-bool        js_conn_keepalive(const js_conn_t *c);
 void        js_conn_reuse(js_conn_t *c);
 void        js_conn_process_write(js_conn_t *c);
 

@@ -46,7 +46,7 @@ static void worker_conn_process(js_conn_t *c) {
             /* Reuse connection: reset parser, send next request */
             js_http_response_reset(r);
             js_conn_reuse(c);
-            js_conn_set_request(c, cfg->requests[next_idx].data,
+            js_conn_set_output(c, cfg->requests[next_idx].data,
                                  cfg->requests[next_idx].len);
             js_epoll_mod(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
         } else {
@@ -62,7 +62,7 @@ static void worker_conn_process(js_conn_t *c) {
                 return;
             }
 
-            js_conn_set_request(c, cfg->requests[next_idx].data,
+            js_conn_set_output(c, cfg->requests[next_idx].data,
                                  cfg->requests[next_idx].len);
             js_epoll_add(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
         }
@@ -87,7 +87,7 @@ static void worker_conn_process(js_conn_t *c) {
             return;
         }
 
-        js_conn_set_request(c, cfg->requests[next_idx].data,
+        js_conn_set_output(c, cfg->requests[next_idx].data,
                              cfg->requests[next_idx].len);
         js_epoll_add(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
     } else {
@@ -188,7 +188,7 @@ static void worker_c_path(js_worker_t *w) {
         /* Assign request (round-robin for array mode) */
         int req_idx = i % cfg->request_count;
         conns[i]->req_index = req_idx;
-        js_conn_set_request(conns[i], cfg->requests[req_idx].data,
+        js_conn_set_output(conns[i], cfg->requests[req_idx].data,
                              cfg->requests[req_idx].len);
 
         js_epoll_add(engine, &conns[i]->socket, EPOLLIN | EPOLLOUT | EPOLLET);

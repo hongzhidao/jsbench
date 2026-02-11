@@ -224,7 +224,7 @@ void     js_tls_free(SSL *ssl);
 js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
                              SSL_CTX *ssl_ctx, const char *hostname);
 void        js_conn_free(js_conn_t *c);
-int         js_conn_set_request(js_conn_t *c, const char *data, size_t len);
+int         js_conn_set_output(js_conn_t *c, const char *data, size_t len);
 void        js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
                            socklen_t addr_len, SSL_CTX *ssl_ctx,
                            const char *hostname);
@@ -234,7 +234,7 @@ void        js_conn_process_write(js_conn_t *c);
 /* loop.c */
 js_loop_t  *js_loop_create(void);
 void        js_loop_free(js_loop_t *loop);
-int         js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
+int         js_loop_add(js_loop_t *loop, js_conn_t *conn,
                         SSL_CTX *ssl_ctx, JSContext *ctx,
                         JSValue resolve, JSValue reject);
 int         js_loop_run(js_loop_t *loop, JSRuntime *rt);

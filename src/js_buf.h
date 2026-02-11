@@ -5,6 +5,7 @@ typedef struct {
     char   *data;
     size_t  len;     /* bytes of valid data */
     size_t  cap;     /* allocated capacity */
+    size_t  pos;     /* current position (bytes consumed/sent) */
 } js_buf_t;
 
 static inline void js_buf_init(js_buf_t *b) {
@@ -18,10 +19,12 @@ static inline void js_buf_free(js_buf_t *b) {
     b->data = NULL;
     b->len = 0;
     b->cap = 0;
+    b->pos = 0;
 }
 
 static inline void js_buf_reset(js_buf_t *b) {
     b->len = 0;
+    b->pos = 0;
 }
 
 static inline int js_buf_ensure(js_buf_t *b, size_t need) {

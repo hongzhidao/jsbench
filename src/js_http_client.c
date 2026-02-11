@@ -36,26 +36,28 @@ void js_conn_free(js_conn_t *c) {
     if (!c) return;
     if (c->ssl) js_tls_free(c->ssl);
     if (c->socket.fd >= 0) close(c->socket.fd);
+    js_buf_free(&c->out);
     js_buf_free(&c->in);
     free(c);
 }
 
-int js_conn_set_request(js_conn_t *c, const char *data, size_t len) {
-    c->req_data = data;
-    c->req_len = len;
-    c->req_sent = 0;
+int js_conn_set_output(js_conn_t *c, const char *data, size_t len) {
+    if (js_buf_ensure(&c->out, len) < 0) return -1;
+    memcpy(c->out.data, data, len);
+    c->out.len = len;
+    c->out.pos = 0;
     return 0;
 }
 
 static int conn_do_write(js_conn_t *c) {
-    while (c->req_sent < c->req_len) {
+    while (c->out.pos < c->out.len) {
         ssize_t n;
         if (c->ssl) {
-            n = js_tls_write(c->ssl, c->req_data + c->req_sent,
-                              c->req_len - c->req_sent);
+            n = js_tls_write(c->ssl, c->out.data + c->out.pos,
+                              c->out.len - c->out.pos);
         } else {
-            n = write(c->socket.fd, c->req_data + c->req_sent,
-                      c->req_len - c->req_sent);
+            n = write(c->socket.fd, c->out.data + c->out.pos,
+                      c->out.len - c->out.pos);
         }
 
         if (n < 0) {
@@ -67,7 +69,7 @@ static int conn_do_write(js_conn_t *c) {
             c->state = CONN_ERROR;
             return -1;
         }
-        c->req_sent += (size_t)n;
+        c->out.pos += (size_t)n;
     }
 
     c->state = CONN_READING;
@@ -121,7 +123,7 @@ void js_conn_reuse(js_conn_t *c) {
     /* Reuse existing connection: reset buffer and timing */
     js_buf_reset(&c->in);
     c->state = CONN_WRITING;
-    c->req_sent = 0;
+    c->out.pos = 0;
     c->start_ns = js_now_ns();
 }
 
@@ -157,7 +159,7 @@ void js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
     }
 
     c->state = CONN_CONNECTING;
-    c->req_sent = 0;
+    c->out.pos = 0;
     c->start_ns = js_now_ns();
 
     if (ssl_ctx) {

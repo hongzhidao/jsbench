@@ -5,7 +5,6 @@
 typedef struct {
     js_conn_t           *conn;
     js_http_response_t   response;
-    char                *raw_data;      /* serialized HTTP request (conn->req_data points here) */
     SSL_CTX             *ssl_ctx;       /* TLS context, NULL for plain HTTP */
     JSContext           *ctx;
     JSValue              resolve;
@@ -51,7 +50,6 @@ void js_loop_free(js_loop_t *loop) {
         js_pending_t *p = loop->items[i];
         js_http_response_free(&p->response);
         js_conn_free(p->conn);
-        free(p->raw_data);
         if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
         JS_FreeValue(p->ctx, p->resolve);
         JS_FreeValue(p->ctx, p->reject);
@@ -96,7 +94,6 @@ static void pending_complete(js_loop_t *loop, js_pending_t *p, int idx) {
     JS_FreeValue(ctx, p->reject);
     js_http_response_free(r);
     js_conn_free(conn);
-    free(p->raw_data);
     if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
     free(p);
 
@@ -122,7 +119,6 @@ static void pending_fail(js_loop_t *loop, js_pending_t *p, int idx,
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_conn_free(p->conn);
-    free(p->raw_data);
     if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
     free(p);
 
@@ -204,7 +200,7 @@ static void loop_on_error(js_event_t *ev) {
 
 /* ── Add a pending fetch ─────────────────────────────────────────────── */
 
-int js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
+int js_loop_add(js_loop_t *loop, js_conn_t *conn,
                 SSL_CTX *ssl_ctx, JSContext *ctx,
                 JSValue resolve, JSValue reject) {
     /* Grow array if needed */
@@ -224,7 +220,6 @@ int js_loop_add(js_loop_t *loop, js_conn_t *conn, char *raw_data,
     conn->socket.data = &p->response;
 
     p->conn = conn;
-    p->raw_data = raw_data;
     p->ssl_ctx = ssl_ctx;
     p->ctx = ctx;
     p->resolve = resolve;

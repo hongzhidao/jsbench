@@ -17,12 +17,8 @@ typedef struct js_conn {
     conn_state_t     state;
     SSL             *ssl;
 
-    /* Request data */
-    const char      *req_data;
-    size_t           req_len;
-    size_t           req_sent;
-
-    /* Read buffer */
+    /* I/O buffers */
+    js_buf_t         out;
     js_buf_t         in;
 
     /* Timing */

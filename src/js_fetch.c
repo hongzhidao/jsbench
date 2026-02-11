@@ -392,7 +392,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     if (url.is_tls) {
         ssl_ctx = js_tls_ctx_create();
         if (!ssl_ctx) {
-            free(raw.data);
+            js_buf_free(&raw);
             freeaddrinfo(res);
             JS_FreeCString(ctx, url_str);
             if (method_str) JS_FreeCString(ctx, method_str);
@@ -413,13 +413,13 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
         return JS_ThrowInternalError(ctx, "Connection failed");
     }
 
-    js_conn_set_request(conn, raw.data, raw.len);
+    js_conn_set_output(conn, raw.data, raw.len);
+    js_buf_free(&raw);
 
     /* Register with event loop — return a pending promise */
     js_loop_t *loop = JS_GetContextOpaque(ctx);
     if (!loop) {
         js_conn_free(conn);
-        free(raw.data);
         if (ssl_ctx) SSL_CTX_free(ssl_ctx);
         JS_FreeCString(ctx, url_str);
         if (method_str) JS_FreeCString(ctx, method_str);
@@ -430,7 +430,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     JSValue resolve_funcs[2];
     JSValue promise = JS_NewPromiseCapability(ctx, resolve_funcs);
 
-    js_loop_add(loop, conn, raw.data, ssl_ctx, ctx,
+    js_loop_add(loop, conn, ssl_ctx, ctx,
                 resolve_funcs[0], resolve_funcs[1]);
 
     JS_FreeCString(ctx, url_str);

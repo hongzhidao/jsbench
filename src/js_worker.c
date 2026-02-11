@@ -54,7 +54,7 @@ static void worker_conn_process(js_conn_t *c) {
             js_epoll_del(engine, &c->socket);
             js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
                           cfg->use_tls ? cfg->ssl_ctx : NULL,
-                          cfg->requests[0].url.host);
+                          cfg->url.host);
 
             if (c->state == CONN_ERROR) {
                 w->stats.connect_errors++;
@@ -79,7 +79,7 @@ static void worker_conn_process(js_conn_t *c) {
         int next_idx = c->req_index;
         js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
                       cfg->use_tls ? cfg->ssl_ctx : NULL,
-                      cfg->requests[0].url.host);
+                      cfg->url.host);
 
         if (c->state == CONN_ERROR) {
             w->stats.connect_errors++;
@@ -171,7 +171,7 @@ static void worker_c_path(js_worker_t *w) {
     for (int i = 0; i < w->conn_count; i++) {
         conns[i] = js_conn_create((struct sockaddr *)&cfg->addr, cfg->addr_len,
                                     cfg->use_tls ? cfg->ssl_ctx : NULL,
-                                    cfg->requests[0].url.host);
+                                    cfg->url.host);
         if (!conns[i]) {
             w->stats.connect_errors++;
             w->stats.errors++;

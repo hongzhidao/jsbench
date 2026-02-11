@@ -371,14 +371,15 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     }
 
     /* Build HTTP request */
-    js_request_desc_t desc = {
+    js_request_t req = {
+        .url = url,
         .method = (char *)method,
         .headers = extra_headers[0] ? extra_headers : NULL,
         .body = (char *)body,
         .body_len = body_len,
     };
-    js_raw_request_t raw;
-    if (js_serialize_request(&desc, &url, NULL, &raw) != 0) {
+    js_buf_t raw = {0};
+    if (js_request_serialize(&req, NULL, &raw) != 0) {
         freeaddrinfo(res);
         JS_FreeCString(ctx, url_str);
         if (method_str) JS_FreeCString(ctx, method_str);

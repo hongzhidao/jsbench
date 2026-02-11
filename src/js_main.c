@@ -109,10 +109,10 @@ int main(int argc, char **argv) {
 
             /* Create a minimal request entry for the orchestrator */
             config.request_count = 1;
-            config.requests = calloc(1, sizeof(js_raw_request_t));
+            config.requests = calloc(1, sizeof(js_buf_t));
             if (config.target) {
-                js_parse_url(config.target, &config.requests[0].url);
-                config.use_tls = config.requests[0].url.is_tls;
+                js_parse_url(config.target, &config.url);
+                config.use_tls = config.url.is_tls;
             }
         }
 
@@ -134,7 +134,7 @@ cleanup:
     JS_FreeRuntime(rt);
 
     for (int i = 0; i < config.request_count; i++) {
-        free(config.requests[i].data);
+        js_buf_free(&config.requests[i]);
     }
     free(config.requests);
     free(config.target);

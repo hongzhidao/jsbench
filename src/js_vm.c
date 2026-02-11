@@ -229,49 +229,46 @@ int js_vm_extract_config(JSContext *ctx, JSValue bench_export,
 
 static int extract_single_request(JSContext *ctx, JSValue val,
                                   js_config_t *config, const char *target_override) {
-    js_request_desc_t desc = {0};
-    js_url_t url;
+    js_request_t req = {0};
 
     if (JS_IsString(val)) {
         const char *s = JS_ToCString(ctx, val);
         if (!s) return -1;
 
-        /* If target override, combine target base with path */
         if (target_override) {
             js_url_t turl;
             if (js_parse_url(target_override, &turl) != 0) {
                 JS_FreeCString(ctx, s);
                 return -1;
             }
-            /* If val is a path (starts with /), combine with target */
             if (s[0] == '/') {
                 char full_url[JS_MAX_URL_LEN];
                 snprintf(full_url, sizeof(full_url), "%s://%s:%d%s",
                          turl.scheme, turl.host, turl.port, s);
-                if (js_parse_url(full_url, &url) != 0) {
+                if (js_parse_url(full_url, &req.url) != 0) {
                     JS_FreeCString(ctx, s);
                     return -1;
                 }
             } else {
-                if (js_parse_url(s, &url) != 0) {
+                if (js_parse_url(s, &req.url) != 0) {
                     JS_FreeCString(ctx, s);
                     return -1;
                 }
-                /* Override host/port from target */
-                strcpy(url.host, turl.host);
-                url.port = turl.port;
-                strcpy(url.port_str, turl.port_str);
-                url.is_tls = turl.is_tls;
-                strcpy(url.scheme, turl.scheme);
+                strcpy(req.url.host, turl.host);
+                req.url.port = turl.port;
+                strcpy(req.url.port_str, turl.port_str);
+                req.url.is_tls = turl.is_tls;
+                strcpy(req.url.scheme, turl.scheme);
             }
         } else {
-            if (js_parse_url(s, &url) != 0) {
+            if (js_parse_url(s, &req.url) != 0) {
                 JS_FreeCString(ctx, s);
                 return -1;
             }
         }
         JS_FreeCString(ctx, s);
-        desc.method = "GET";
+        req.method = strdup("GET");
+
     } else if (JS_IsObject(val)) {
         JSValue v_url = JS_GetPropertyStr(ctx, val, "url");
         JSValue v_method = JS_GetPropertyStr(ctx, val, "method");
@@ -287,48 +284,46 @@ static int extract_single_request(JSContext *ctx, JSValue val,
             return -1;
         }
 
-        /* Handle path-only URLs with target override */
         if (target_override && url_s[0] == '/') {
             js_url_t turl;
             if (js_parse_url(target_override, &turl) == 0) {
                 char full_url[JS_MAX_URL_LEN];
                 snprintf(full_url, sizeof(full_url), "%s://%s:%d%s",
                          turl.scheme, turl.host, turl.port, url_s);
-                js_parse_url(full_url, &url);
+                js_parse_url(full_url, &req.url);
             } else {
-                js_parse_url(url_s, &url);
+                js_parse_url(url_s, &req.url);
             }
         } else if (target_override) {
-            js_parse_url(url_s, &url);
+            js_parse_url(url_s, &req.url);
             js_url_t turl;
             if (js_parse_url(target_override, &turl) == 0) {
-                strcpy(url.host, turl.host);
-                url.port = turl.port;
-                strcpy(url.port_str, turl.port_str);
-                url.is_tls = turl.is_tls;
-                strcpy(url.scheme, turl.scheme);
+                strcpy(req.url.host, turl.host);
+                req.url.port = turl.port;
+                strcpy(req.url.port_str, turl.port_str);
+                req.url.is_tls = turl.is_tls;
+                strcpy(req.url.scheme, turl.scheme);
             }
         } else {
-            js_parse_url(url_s, &url);
+            js_parse_url(url_s, &req.url);
         }
         JS_FreeCString(ctx, url_s);
 
         if (JS_IsString(v_method)) {
             const char *m = JS_ToCString(ctx, v_method);
-            desc.method = strdup(m);
+            req.method = strdup(m);
             JS_FreeCString(ctx, m);
         } else {
-            desc.method = "GET";
+            req.method = strdup("GET");
         }
 
         if (JS_IsString(v_body)) {
             const char *b = JS_ToCString(ctx, v_body);
-            desc.body = strdup(b);
-            desc.body_len = strlen(b);
+            req.body = strdup(b);
+            req.body_len = strlen(b);
             JS_FreeCString(ctx, b);
         }
 
-        /* Process headers object into "Key: Value\r\n" format */
         if (JS_IsObject(v_headers)) {
             char hdr_buf[4096] = "";
             int off = 0;
@@ -352,46 +347,43 @@ static int extract_single_request(JSContext *ctx, JSValue val,
                 }
                 js_free(ctx, tab);
             }
-            if (off > 0) desc.headers = strdup(hdr_buf);
+            if (off > 0) req.headers = strdup(hdr_buf);
         }
 
         JS_FreeValue(ctx, v_url);
         JS_FreeValue(ctx, v_method);
         JS_FreeValue(ctx, v_body);
         JS_FreeValue(ctx, v_headers);
+
     } else {
         return -1;
     }
 
-    /* Serialize the request */
-    config->requests = realloc(config->requests,
-                               sizeof(js_raw_request_t) * (size_t)(config->request_count + 1));
-    js_raw_request_t *raw = &config->requests[config->request_count];
+    /* Grow buf array */
+    js_buf_t *tmp = realloc(config->requests,
+                            sizeof(js_buf_t) * (size_t)(config->request_count + 1));
+    if (!tmp) {
+        js_request_free(&req);
+        return -1;
+    }
+    config->requests = tmp;
 
-    if (js_serialize_request(&desc, &url, config->host, raw) != 0) {
-        /* cleanup */
-        if (desc.method && desc.method != (char*)"GET" && desc.method != (char*)"POST")
-            free(desc.method);
-        free(desc.body);
-        free(desc.headers);
+    js_buf_t *buf = &config->requests[config->request_count];
+    memset(buf, 0, sizeof(*buf));
+
+    if (js_request_serialize(&req, config->host, buf) != 0) {
+        js_request_free(&req);
         return -1;
     }
 
     config->request_count++;
 
-    /* Set TLS flag from first request */
-    if (config->request_count == 1)
-        config->use_tls = url.is_tls;
-
-    /* Cleanup heap-allocated desc fields */
-    if (desc.body) free(desc.body);
-    if (desc.headers) free(desc.headers);
-    /* method: only free if we strdup'd it (i.e., it's not a literal) */
-    if (desc.method && strcmp(desc.method, "GET") != 0) {
-        /* Heuristic: only free if we allocated it above */
-        /* This is a simplification -- in production we'd track ownership */
+    if (config->request_count == 1) {
+        config->url = req.url;
+        config->use_tls = req.url.is_tls;
     }
 
+    js_request_free(&req);
     return 0;
 }
 

@@ -41,23 +41,15 @@ typedef struct {
     bool    is_tls;
 } js_url_t;
 
-/* ── HTTP request descriptor ──────────────────────────────────────────── */
+/* ── HTTP request ────────────────────────────────────────────────────── */
 
 typedef struct {
-    char   *url;
-    char   *method;         /* GET, POST, etc. */
-    char   *headers;        /* "Key: Value\r\n..." */
-    char   *body;
-    size_t  body_len;
-} js_request_desc_t;
-
-/* ── Pre-serialized HTTP request ──────────────────────────────────────── */
-
-typedef struct {
-    char   *data;
-    size_t  len;
-    js_url_t url;
-} js_raw_request_t;
+    js_url_t     url;
+    char        *method;       /* "GET", "POST", etc. */
+    char        *headers;      /* "Key: Value\r\n..." */
+    char        *body;
+    size_t       body_len;
+} js_request_t;
 
 /* ── Histogram ────────────────────────────────────────────────────────── */
 
@@ -156,9 +148,12 @@ typedef struct {
     char       *script_path;
     char       *script_source;
 
+    /* Target URL (from first request) */
+    js_url_t   url;
+
     /* Pre-built requests (C-path) */
-    js_raw_request_t *requests;
-    int                request_count;
+    js_buf_t   *requests;
+    int         request_count;
 
     /* Resolved address */
     struct sockaddr_storage addr;
@@ -195,10 +190,9 @@ void    js_format_bytes(uint64_t bytes, char *buf, size_t buf_len);
 void    js_format_duration(double us, char *buf, size_t buf_len);
 int     js_set_nonblocking(int fd);
 uint64_t js_now_ns(void);
-int     js_serialize_request(const js_request_desc_t *desc,
-                              const js_url_t *url,
-                              const char *host_override,
-                              js_raw_request_t *out);
+int     js_request_serialize(js_request_t *req, const char *host_override,
+                              js_buf_t *out);
+void    js_request_free(js_request_t *req);
 
 /* stats.c */
 void    js_hist_init(js_hist_t *h);

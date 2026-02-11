@@ -140,76 +140,68 @@ uint64_t js_now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-int js_serialize_request(const js_request_desc_t *desc,
-                          const js_url_t *url,
-                          const char *host_override,
-                          js_raw_request_t *out) {
-    const char *method = desc->method ? desc->method : "GET";
-    const char *path = url->path[0] ? url->path : "/";
-    const char *host = host_override ? host_override : url->host;
+int js_request_serialize(js_request_t *req, const char *host_override,
+                          js_buf_t *out) {
+    const char *method = req->method ? req->method : "GET";
+    const char *path = req->url.path[0] ? req->url.path : "/";
+    const char *host = host_override ? host_override : req->url.host;
 
     /* Calculate size */
     size_t cap = strlen(method) + 1 + strlen(path) + 32;   /* request line */
     cap += strlen("Host: ") + strlen(host) + 4;
 
-    /* Check if Host header needs port */
-    bool need_port = (url->is_tls && url->port != 443) ||
-                     (!url->is_tls && url->port != 80);
+    bool need_port = (req->url.is_tls && req->url.port != 443) ||
+                     (!req->url.is_tls && req->url.port != 80);
     if (need_port && !host_override) cap += 8;
 
-    if (desc->headers) cap += strlen(desc->headers);
-    if (desc->body && desc->body_len > 0) {
-        cap += 64;  /* Content-Length header */
-        cap += desc->body_len;
+    if (req->headers) cap += strlen(req->headers);
+    if (req->body && req->body_len > 0) {
+        cap += 64;
+        cap += req->body_len;
     }
     cap += 32; /* Connection: keep-alive\r\n */
     cap += 4;  /* final \r\n */
 
-    char *buf = malloc(cap);
-    if (!buf) return -1;
+    if (js_buf_ensure(out, cap) < 0) return -1;
 
     int off = 0;
 
-    /* Request line */
-    off += sprintf(buf + off, "%s %s HTTP/1.1\r\n", method, path);
+    off += sprintf(out->data + off, "%s %s HTTP/1.1\r\n", method, path);
 
-    /* Host header */
     if (need_port && !host_override)
-        off += sprintf(buf + off, "Host: %s:%d\r\n", host, url->port);
+        off += sprintf(out->data + off, "Host: %s:%d\r\n", host, req->url.port);
     else
-        off += sprintf(buf + off, "Host: %s\r\n", host);
+        off += sprintf(out->data + off, "Host: %s\r\n", host);
 
-    /* User headers */
-    if (desc->headers && desc->headers[0]) {
-        size_t hlen = strlen(desc->headers);
-        memcpy(buf + off, desc->headers, hlen);
+    if (req->headers && req->headers[0]) {
+        size_t hlen = strlen(req->headers);
+        memcpy(out->data + off, req->headers, hlen);
         off += (int)hlen;
-        /* Ensure trailing \r\n */
-        if (hlen < 2 || buf[off-1] != '\n') {
-            buf[off++] = '\r';
-            buf[off++] = '\n';
+        if (hlen < 2 || out->data[off-1] != '\n') {
+            out->data[off++] = '\r';
+            out->data[off++] = '\n';
         }
     }
 
-    /* Connection keep-alive */
-    off += sprintf(buf + off, "Connection: keep-alive\r\n");
+    off += sprintf(out->data + off, "Connection: keep-alive\r\n");
 
-    /* Content-Length if body */
-    if (desc->body && desc->body_len > 0)
-        off += sprintf(buf + off, "Content-Length: %zu\r\n", desc->body_len);
+    if (req->body && req->body_len > 0)
+        off += sprintf(out->data + off, "Content-Length: %zu\r\n", req->body_len);
 
-    /* End of headers */
-    buf[off++] = '\r';
-    buf[off++] = '\n';
+    out->data[off++] = '\r';
+    out->data[off++] = '\n';
 
-    /* Body */
-    if (desc->body && desc->body_len > 0) {
-        memcpy(buf + off, desc->body, desc->body_len);
-        off += (int)desc->body_len;
+    if (req->body && req->body_len > 0) {
+        memcpy(out->data + off, req->body, req->body_len);
+        off += (int)req->body_len;
     }
 
-    out->data = buf;
     out->len = (size_t)off;
-    out->url = *url;
     return 0;
+}
+
+void js_request_free(js_request_t *req) {
+    free(req->method);
+    free(req->headers);
+    free(req->body);
 }

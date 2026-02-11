@@ -9,7 +9,7 @@ int js_bench_run(js_config_t *config) {
     if (nthreads > nconns) nthreads = nconns;
 
     /* Resolve DNS once */
-    js_url_t *first_url = &config->requests[0].url;
+    js_url_t *first_url = &config->url;
 
     /* If target override, use that for DNS */
     js_url_t target_url;
@@ -48,10 +48,10 @@ int js_bench_run(js_config_t *config) {
         printf(", %.0fs duration", config->duration_sec);
     printf("\n");
     printf("Target: %s://%s:%d%s\n",
-           config->requests[0].url.scheme,
-           config->requests[0].url.host,
-           config->requests[0].url.port,
-           config->requests[0].url.path);
+           config->url.scheme,
+           config->url.host,
+           config->url.port,
+           config->url.path);
     if (config->mode == MODE_BENCH_ASYNC)
         printf("Mode: async function (JS path)\n");
     else if (config->mode == MODE_BENCH_ARRAY)

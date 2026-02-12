@@ -25,19 +25,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Initialize QuickJS */
-    JSContext *ctx = js_vm_create();
-    if (!ctx) {
-        fprintf(stderr, "Error: failed to create JS context\n");
-        free(source);
-        return 1;
-    }
-
-    /* Create engine and event loop (fetch() needs it during module evaluation) */
+    /* Create engine and event loop (fetch() needs them during module evaluation) */
     js_engine_t *engine = js_engine_create();
     if (!engine) {
         fprintf(stderr, "Error: failed to create engine\n");
-        js_vm_free(ctx);
         free(source);
         return 1;
     }
@@ -46,7 +37,16 @@ int main(int argc, char **argv) {
     js_loop_t *loop = js_loop_create();
     if (!loop) {
         fprintf(stderr, "Error: failed to create event loop\n");
-        js_vm_free(ctx);
+        js_engine_destroy(engine);
+        free(source);
+        return 1;
+    }
+
+    /* Initialize QuickJS */
+    JSContext *ctx = js_vm_create();
+    if (!ctx) {
+        fprintf(stderr, "Error: failed to create JS context\n");
+        js_loop_free(loop);
         js_engine_destroy(engine);
         free(source);
         return 1;

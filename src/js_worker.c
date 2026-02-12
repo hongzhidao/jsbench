@@ -152,10 +152,7 @@ static void worker_on_error(js_event_t *ev) {
 
 static void worker_c_path(js_worker_t *w) {
     js_config_t *cfg = w->config;
-
-    js_engine_t *engine = js_engine_create();
-    if (engine == NULL) return;
-    js_thread()->engine = engine;
+    js_engine_t *engine = js_thread()->engine;
 
     /* Duration timer */
     js_timer_t duration_timer = {0};
@@ -226,18 +223,12 @@ static void worker_c_path(js_worker_t *w) {
     }
     free(peers);
     free(conns);
-    js_engine_destroy(engine);
 }
 
 /* ── JS-path worker: async function mode ──────────────────────────────── */
 
 static void worker_js_path(js_worker_t *w) {
     js_config_t *cfg = w->config;
-
-    /* Each JS worker gets its own engine and runtime */
-    js_engine_t *engine = js_engine_create();
-    if (engine == NULL) return;
-    js_thread()->engine = engine;
 
     JSContext *ctx = js_vm_create();
 
@@ -246,7 +237,6 @@ static void worker_js_path(js_worker_t *w) {
     if (!loop) {
         fprintf(stderr, "Worker %d: failed to create event loop\n", w->id);
         js_vm_free(ctx);
-        js_engine_destroy(engine);
         return;
     }
     JS_SetContextOpaque(ctx, loop);
@@ -320,7 +310,6 @@ static void worker_js_path(js_worker_t *w) {
     JS_SetContextOpaque(ctx, NULL);
     js_loop_free(loop);
     js_vm_free(ctx);
-    js_engine_destroy(engine);
 }
 
 /* ── Worker thread entry point ────────────────────────────────────────── */
@@ -329,11 +318,16 @@ void *js_worker_run(void *arg) {
     js_worker_t *w = arg;
     js_stats_init(&w->stats);
 
+    js_engine_t *engine = js_engine_create();
+    if (engine == NULL) return NULL;
+    js_thread()->engine = engine;
+
     if (w->config->mode == MODE_BENCH_ASYNC) {
         worker_js_path(w);
     } else {
         worker_c_path(w);
     }
 
+    js_engine_destroy(engine);
     return NULL;
 }

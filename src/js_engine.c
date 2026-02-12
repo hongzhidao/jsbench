@@ -1,5 +1,7 @@
 #include "js_main.h"
 
+__thread js_thread_t  js_thread_ctx;
+
 js_engine_t *js_engine_create(void)
 {
     js_engine_t *engine;

@@ -1,28 +1,10 @@
 #include "js_main.h"
 
-/* ── Pending fetch operation ─────────────────────────────────────────── */
-
-typedef struct {
-    js_conn_t           *conn;
-    js_http_peer_t       peer;
-    SSL_CTX             *ssl_ctx;       /* TLS context, NULL for plain HTTP */
-    JSContext           *ctx;
-    JSValue              resolve;
-    JSValue              reject;
-    uint64_t             deadline_ns;
-    js_loop_t           *loop;
-} js_pending_t;
-
 /* ── Loop structure (opaque to other modules) ────────────────────────── */
 
 struct js_loop {
-    js_engine_t   *engine;
-    js_pending_t  **items;
-    int             count;
-    int             cap;
+    struct list_head  pending;
 };
-
-#define LOOP_INIT_CAP  16
 
 /* ── Create / free ───────────────────────────────────────────────────── */
 
@@ -30,15 +12,7 @@ js_loop_t *js_loop_create(void) {
     js_loop_t *loop = calloc(1, sizeof(js_loop_t));
     if (!loop) return NULL;
 
-    loop->engine = js_engine_create();
-    if (loop->engine == NULL) {
-        free(loop);
-        return NULL;
-    }
-
-    loop->items = calloc(LOOP_INIT_CAP, sizeof(js_pending_t *));
-    loop->cap = LOOP_INIT_CAP;
-    loop->count = 0;
+    init_list_head(&loop->pending);
     return loop;
 }
 
@@ -46,34 +20,29 @@ void js_loop_free(js_loop_t *loop) {
     if (!loop) return;
 
     /* Clean up any remaining pending operations */
-    for (int i = 0; i < loop->count; i++) {
-        js_pending_t *p = loop->items[i];
-        js_http_response_free(&p->peer.response);
-        js_conn_free(p->conn);
+    struct list_head *el, *el1;
+    list_for_each_safe(el, el1, &loop->pending) {
+        js_pending_t *p = list_entry(el, js_pending_t, link);
+        js_fetch_t *f = js_fetch_from_pending(p);
+        js_timer_delete(&js_thread()->engine->timers, &f->timer);
+        js_http_response_free(&f->response);
+        js_conn_free(f->conn);
         if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
         JS_FreeValue(p->ctx, p->resolve);
         JS_FreeValue(p->ctx, p->reject);
-        free(p);
+        list_del(&p->link);
+        free(f);
     }
 
-    free(loop->items);
-    js_engine_destroy(loop->engine);
     free(loop);
-}
-
-/* ── Internal: remove pending at index (swap with last) ──────────────── */
-
-static void loop_remove(js_loop_t *loop, int idx) {
-    loop->items[idx] = loop->items[loop->count - 1];
-    loop->items[loop->count - 1] = NULL;
-    loop->count--;
 }
 
 /* ── Internal: resolve a completed fetch ─────────────────────────────── */
 
-static void pending_complete(js_loop_t *loop, js_pending_t *p, int idx) {
-    js_conn_t *conn = p->conn;
-    js_http_response_t *r = &p->peer.response;
+static void pending_complete(js_loop_t *loop, js_pending_t *p) {
+    js_fetch_t *f = js_fetch_from_pending(p);
+    js_conn_t *conn = f->conn;
+    js_http_response_t *r = &f->response;
     JSContext *ctx = p->ctx;
 
     /* Build Response object and resolve the promise */
@@ -89,20 +58,20 @@ static void pending_complete(js_loop_t *loop, js_pending_t *p, int idx) {
     JS_FreeValue(ctx, response);
 
     /* Cleanup */
-    js_epoll_del(loop->engine, &conn->socket);
+    js_epoll_del(js_thread()->engine, &conn->socket);
+    js_timer_delete(&js_thread()->engine->timers, &f->timer);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_http_response_free(r);
     js_conn_free(conn);
     if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
-    free(p);
-
-    loop_remove(loop, idx);
+    list_del(&p->link);
+    free(f);
 }
 
 /* ── Internal: reject a failed/timed-out fetch ───────────────────────── */
 
-static void pending_fail(js_loop_t *loop, js_pending_t *p, int idx,
+static void pending_fail(js_loop_t *loop, js_pending_t *p,
                          const char *message) {
     JSContext *ctx = p->ctx;
 
@@ -115,36 +84,28 @@ static void pending_fail(js_loop_t *loop, js_pending_t *p, int idx,
     JS_FreeValue(ctx, err);
 
     /* Cleanup */
-    js_epoll_del(loop->engine, &p->conn->socket);
+    js_fetch_t *f = js_fetch_from_pending(p);
+    js_epoll_del(js_thread()->engine, &f->conn->socket);
+    js_timer_delete(&js_thread()->engine->timers, &f->timer);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
-    js_conn_free(p->conn);
+    js_conn_free(f->conn);
     if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
-    free(p);
-
-    loop_remove(loop, idx);
+    list_del(&p->link);
+    free(f);
 }
 
 /* ── Loop connection handlers ────────────────────────────────────────── */
 
 static void loop_conn_process(js_conn_t *c) {
-    js_pending_t *p = c->udata;
+    js_fetch_t *f = c->socket.data;
+    js_pending_t *p = &f->pending;
     js_loop_t *loop = p->loop;
 
     if (c->state == CONN_DONE) {
-        for (int i = 0; i < loop->count; i++) {
-            if (loop->items[i] == p) {
-                pending_complete(loop, p, i);
-                return;
-            }
-        }
+        pending_complete(loop, p);
     } else if (c->state == CONN_ERROR) {
-        for (int i = 0; i < loop->count; i++) {
-            if (loop->items[i] == p) {
-                pending_fail(loop, p, i, "Connection error");
-                return;
-            }
-        }
+        pending_fail(loop, p, "Connection error");
     } else {
         /* Update epoll interest based on connection state */
         uint32_t mask = EPOLLET;
@@ -153,14 +114,14 @@ static void loop_conn_process(js_conn_t *c) {
             mask |= EPOLLOUT | EPOLLIN;
         else
             mask |= EPOLLIN;
-        js_epoll_mod(loop->engine, &c->socket, mask);
+        js_epoll_mod(js_thread()->engine, &c->socket, mask);
     }
 }
 
 static void loop_on_read(js_event_t *ev) {
     js_conn_t *c = (js_conn_t *)ev;
-    js_http_peer_t *peer = c->socket.data;
-    js_http_response_t *r = &peer->response;
+    js_fetch_t *f = c->socket.data;
+    js_http_response_t *r = &f->response;
     int rc = js_conn_read(c);
 
     if (c->state == CONN_READING && c->in.len > 0) {
@@ -201,46 +162,19 @@ static void loop_on_error(js_event_t *ev) {
 
 /* ── Add a pending fetch ─────────────────────────────────────────────── */
 
-int js_loop_add(js_loop_t *loop, js_conn_t *conn,
-                SSL_CTX *ssl_ctx, JSContext *ctx,
-                JSValue resolve, JSValue reject) {
-    /* Grow array if needed */
-    if (loop->count >= loop->cap) {
-        int new_cap = loop->cap * 2;
-        js_pending_t **new_items = realloc(loop->items,
-                                           sizeof(js_pending_t *) * (size_t)new_cap);
-        if (!new_items) return -1;
-        loop->items = new_items;
-        loop->cap = new_cap;
-    }
-
-    js_pending_t *p = calloc(1, sizeof(js_pending_t));
-    if (!p) return -1;
-
-    js_http_response_init(&p->peer.response);
-    conn->socket.data = &p->peer;
-
-    p->conn = conn;
-    p->ssl_ctx = ssl_ctx;
-    p->ctx = ctx;
-    p->resolve = resolve;
-    p->reject = reject;
-    p->deadline_ns = js_now_ns() + (uint64_t)(30.0 * 1e9);  /* 30s timeout */
+int js_loop_add(js_loop_t *loop, js_pending_t *p) {
     p->loop = loop;
 
-    conn->udata = p;
+    js_fetch_t *f = js_fetch_from_pending(p);
+    js_conn_t *conn = f->conn;
     conn->socket.read  = loop_on_read;
     conn->socket.write = loop_on_write;
     conn->socket.error = loop_on_error;
 
-    js_epoll_add(loop->engine, &conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
+    js_epoll_add(js_thread()->engine, &conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
 
-    loop->items[loop->count++] = p;
+    list_add_tail(&p->link, &loop->pending);
     return 0;
-}
-
-int js_loop_pending(js_loop_t *loop) {
-    return loop->count;
 }
 
 /* ── Run the event loop ──────────────────────────────────────────────── */
@@ -268,18 +202,18 @@ int js_loop_run(js_loop_t *loop, JSRuntime *rt) {
         }
 
         /* 2. If no pending I/O, we're done */
-        if (loop->count == 0) break;
+        if (list_empty(&loop->pending)) break;
 
         /* 3. Poll for events and dispatch through handlers */
-        if (js_epoll_poll(loop->engine, 100) < 0) break;
+        js_msec_t timer_timeout = js_timer_find(&js_thread()->engine->timers);
+        int timeout = (timer_timeout == (js_msec_t) -1)
+                    ? 100 : (int) timer_timeout;
 
-        /* 4. Check timeouts */
-        uint64_t now = js_now_ns();
-        for (int i = loop->count - 1; i >= 0; i--) {
-            if (now >= loop->items[i]->deadline_ns) {
-                pending_fail(loop, loop->items[i], i, "Request timeout");
-            }
-        }
+        if (js_epoll_poll(js_thread()->engine, timeout) < 0) break;
+
+        /* 4. Expire timers */
+        js_thread()->engine->timers.now = (js_msec_t)(js_now_ns() / 1000000);
+        js_timer_expire(&js_thread()->engine->timers, js_thread()->engine->timers.now);
     }
 
     /* Check for unhandled promise rejections */

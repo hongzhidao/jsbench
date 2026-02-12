@@ -280,15 +280,32 @@ JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
     return obj;
 }
 
-/* ── fetch() implementation ───────────────────────────────────────────── */
+/* ── Fetch timeout handler ────────────────────────────────────────────── */
 
-/*
- * Synchronous (blocking) fetch for use in the QuickJS event loop.
- * Returns a Promise that resolves with a Response.
- *
- * The actual I/O is blocking within this call, but we return
- * a Promise to maintain API compatibility with the Web Fetch API.
- */
+static void js_fetch_timeout_handler(js_timer_t *timer, void *data) {
+    js_pending_t *p = data;
+    js_fetch_t *f = js_fetch_from_pending(p);
+    JSContext *ctx = p->ctx;
+
+    JSValue err = JS_NewError(ctx);
+    JS_DefinePropertyValueStr(ctx, err, "message",
+                              JS_NewString(ctx, "Request timeout"),
+                              JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JSValue ret = JS_Call(ctx, p->reject, JS_UNDEFINED, 1, &err);
+    JS_FreeValue(ctx, ret);
+    JS_FreeValue(ctx, err);
+
+    js_epoll_del(js_thread()->engine, &f->conn->socket);
+    JS_FreeValue(ctx, p->resolve);
+    JS_FreeValue(ctx, p->reject);
+    js_http_response_free(&f->response);
+    js_conn_free(f->conn);
+    if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
+    list_del(&p->link);
+    free(f);
+}
+
+/* ── fetch() implementation ───────────────────────────────────────────── */
 static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv) {
     if (argc < 1) return JS_EXCEPTION;
@@ -427,11 +444,37 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
         return JS_ThrowInternalError(ctx, "No event loop");
     }
 
+    js_fetch_t *f = calloc(1, sizeof(js_fetch_t));
+    if (!f) {
+        js_conn_free(conn);
+        if (ssl_ctx) SSL_CTX_free(ssl_ctx);
+        JS_FreeCString(ctx, url_str);
+        if (method_str) JS_FreeCString(ctx, method_str);
+        if (body_str) JS_FreeCString(ctx, body_str);
+        return JS_ThrowInternalError(ctx, "Out of memory");
+    }
+
+    js_http_response_init(&f->response);
+    conn->socket.data = f;
+
     JSValue resolve_funcs[2];
     JSValue promise = JS_NewPromiseCapability(ctx, resolve_funcs);
 
-    js_loop_add(loop, conn, ssl_ctx, ctx,
-                resolve_funcs[0], resolve_funcs[1]);
+    js_pending_t *p = &f->pending;
+    f->conn = conn;
+    p->ssl_ctx = ssl_ctx;
+    p->ctx = ctx;
+    p->resolve = resolve_funcs[0];
+    p->reject = resolve_funcs[1];
+
+    f->timer.handler = js_fetch_timeout_handler;
+    f->timer.data = p;
+
+    js_engine_t *engine = js_thread()->engine;
+    engine->timers.now = (js_msec_t)(js_now_ns() / 1000000);
+    js_timer_add(&engine->timers, &f->timer, 30 * 1000);
+
+    js_loop_add(loop, p);
 
     JS_FreeCString(ctx, url_str);
     if (method_str) JS_FreeCString(ctx, method_str);

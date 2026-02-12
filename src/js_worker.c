@@ -21,7 +21,7 @@ static void worker_conn_process(js_conn_t *c) {
     js_http_peer_t *peer = c->socket.data;
     js_http_response_t *r = &peer->response;
     js_config_t *cfg = w->config;
-    js_engine_t *engine = w->engine;
+    js_engine_t *engine = js_thread()->engine;
 
     if (c->state == CONN_DONE) {
         /* Record stats */
@@ -155,7 +155,7 @@ static void worker_c_path(js_worker_t *w) {
 
     js_engine_t *engine = js_engine_create();
     if (engine == NULL) return;
-    w->engine = engine;
+    js_thread()->engine = engine;
 
     /* Duration timer */
     js_timer_t duration_timer = {0};
@@ -234,7 +234,11 @@ static void worker_c_path(js_worker_t *w) {
 static void worker_js_path(js_worker_t *w) {
     js_config_t *cfg = w->config;
 
-    /* Each JS worker gets its own runtime */
+    /* Each JS worker gets its own engine and runtime */
+    js_engine_t *engine = js_engine_create();
+    if (engine == NULL) return;
+    js_thread()->engine = engine;
+
     JSRuntime *rt = js_vm_rt_create();
     JSContext *ctx = js_vm_ctx_create(rt);
 
@@ -244,6 +248,7 @@ static void worker_js_path(js_worker_t *w) {
         fprintf(stderr, "Worker %d: failed to create event loop\n", w->id);
         JS_FreeContext(ctx);
         JS_FreeRuntime(rt);
+        js_engine_destroy(engine);
         return;
     }
     JS_SetContextOpaque(ctx, loop);
@@ -320,6 +325,7 @@ static void worker_js_path(js_worker_t *w) {
     js_loop_free(loop);
     JS_FreeContext(ctx);
     JS_FreeRuntime(rt);
+    js_engine_destroy(engine);
 }
 
 /* ── Worker thread entry point ────────────────────────────────────────── */

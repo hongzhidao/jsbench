@@ -12,9 +12,12 @@
 #include "js_epoll.h"
 #include "js_timer.h"
 #include "js_engine.h"
+#include "js_thread.h"
 #include "js_buf.h"
 #include "js_conn.h"
 #include "js_http.h"
+#include "cutils.h"
+#include "list.h"
 
 /* ── Constants ────────────────────────────────────────────────────────── */
 
@@ -130,12 +133,34 @@ typedef struct {
     js_stats_t     stats;
     pthread_t       thread;
     atomic_bool     stop;
-    js_engine_t   *engine;
 } js_worker_t;
 
 /* ── Event loop ──────────────────────────────────────────────────────── */
 
 typedef struct js_loop js_loop_t;
+
+/* ── Pending operation (shared between loop and fetch) ───────────────── */
+
+typedef struct {
+    SSL_CTX             *ssl_ctx;
+    JSContext           *ctx;
+    JSValue              resolve;
+    JSValue              reject;
+    js_loop_t           *loop;
+    struct list_head     link;
+} js_pending_t;
+
+/* ── Fetch context: what conn->socket.data points to ─────────────────── */
+
+typedef struct {
+    js_http_response_t   response;
+    js_pending_t         pending;
+    js_conn_t           *conn;
+    js_timer_t           timer;
+} js_fetch_t;
+
+#define js_fetch_from_pending(p) \
+    js_container_of(p, js_fetch_t, pending)
 
 /* ── Function declarations ────────────────────────────────────────────── */
 
@@ -191,11 +216,8 @@ void        js_conn_process_write(js_conn_t *c);
 /* loop.c */
 js_loop_t  *js_loop_create(void);
 void        js_loop_free(js_loop_t *loop);
-int         js_loop_add(js_loop_t *loop, js_conn_t *conn,
-                        SSL_CTX *ssl_ctx, JSContext *ctx,
-                        JSValue resolve, JSValue reject);
+int         js_loop_add(js_loop_t *loop, js_pending_t *p);
 int         js_loop_run(js_loop_t *loop, JSRuntime *rt);
-int         js_loop_pending(js_loop_t *loop);
 
 /* fetch.c */
 void    js_fetch_init(JSContext *ctx);

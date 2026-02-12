@@ -41,12 +41,23 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Create event loop (fetch() needs it during module evaluation) */
+    /* Create engine and event loop (fetch() needs it during module evaluation) */
+    js_engine_t *engine = js_engine_create();
+    if (!engine) {
+        fprintf(stderr, "Error: failed to create engine\n");
+        JS_FreeContext(ctx);
+        JS_FreeRuntime(rt);
+        free(source);
+        return 1;
+    }
+    js_thread()->engine = engine;
+
     js_loop_t *loop = js_loop_create();
     if (!loop) {
         fprintf(stderr, "Error: failed to create event loop\n");
         JS_FreeContext(ctx);
         JS_FreeRuntime(rt);
+        js_engine_destroy(engine);
         free(source);
         return 1;
     }
@@ -132,6 +143,7 @@ cleanup:
     JS_FreeValue(ctx, bench_export);
     JS_FreeContext(ctx);
     JS_FreeRuntime(rt);
+    js_engine_destroy(engine);
 
     for (int i = 0; i < config.request_count; i++) {
         js_buf_free(&config.requests[i]);

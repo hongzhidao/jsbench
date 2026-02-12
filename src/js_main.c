@@ -26,17 +26,9 @@ int main(int argc, char **argv) {
     }
 
     /* Initialize QuickJS */
-    JSRuntime *rt = js_vm_rt_create();
-    if (!rt) {
-        fprintf(stderr, "Error: failed to create JS runtime\n");
-        free(source);
-        return 1;
-    }
-
-    JSContext *ctx = js_vm_ctx_create(rt);
+    JSContext *ctx = js_vm_create();
     if (!ctx) {
         fprintf(stderr, "Error: failed to create JS context\n");
-        JS_FreeRuntime(rt);
         free(source);
         return 1;
     }
@@ -45,8 +37,7 @@ int main(int argc, char **argv) {
     js_engine_t *engine = js_engine_create();
     if (!engine) {
         fprintf(stderr, "Error: failed to create engine\n");
-        JS_FreeContext(ctx);
-        JS_FreeRuntime(rt);
+        js_vm_free(ctx);
         free(source);
         return 1;
     }
@@ -55,8 +46,7 @@ int main(int argc, char **argv) {
     js_loop_t *loop = js_loop_create();
     if (!loop) {
         fprintf(stderr, "Error: failed to create event loop\n");
-        JS_FreeContext(ctx);
-        JS_FreeRuntime(rt);
+        js_vm_free(ctx);
         js_engine_destroy(engine);
         free(source);
         return 1;
@@ -68,8 +58,7 @@ int main(int argc, char **argv) {
     if (js_vm_eval_module(ctx, script_path, source, &default_export, &bench_export) != 0) {
         JS_SetContextOpaque(ctx, NULL);
         js_loop_free(loop);
-        JS_FreeContext(ctx);
-        JS_FreeRuntime(rt);
+        js_vm_free(ctx);
         free(source);
         return 1;
     }
@@ -141,8 +130,7 @@ cleanup:
     js_loop_free(loop);
     JS_FreeValue(ctx, default_export);
     JS_FreeValue(ctx, bench_export);
-    JS_FreeContext(ctx);
-    JS_FreeRuntime(rt);
+    js_vm_free(ctx);
     js_engine_destroy(engine);
 
     for (int i = 0; i < config.request_count; i++) {

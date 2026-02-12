@@ -239,15 +239,13 @@ static void worker_js_path(js_worker_t *w) {
     if (engine == NULL) return;
     js_thread()->engine = engine;
 
-    JSRuntime *rt = js_vm_rt_create();
-    JSContext *ctx = js_vm_ctx_create(rt);
+    JSContext *ctx = js_vm_create();
 
     /* Create event loop for fetch() */
     js_loop_t *loop = js_loop_create();
     if (!loop) {
         fprintf(stderr, "Worker %d: failed to create event loop\n", w->id);
-        JS_FreeContext(ctx);
-        JS_FreeRuntime(rt);
+        js_vm_free(ctx);
         js_engine_destroy(engine);
         return;
     }
@@ -262,8 +260,7 @@ static void worker_js_path(js_worker_t *w) {
         fprintf(stderr, "Worker %d: failed to evaluate script\n", w->id);
         JS_SetContextOpaque(ctx, NULL);
         js_loop_free(loop);
-        JS_FreeContext(ctx);
-        JS_FreeRuntime(rt);
+        js_vm_free(ctx);
         return;
     }
 
@@ -273,8 +270,7 @@ static void worker_js_path(js_worker_t *w) {
         JS_FreeValue(ctx, bench_export);
         JS_SetContextOpaque(ctx, NULL);
         js_loop_free(loop);
-        JS_FreeContext(ctx);
-        JS_FreeRuntime(rt);
+        js_vm_free(ctx);
         return;
     }
 
@@ -302,7 +298,7 @@ static void worker_js_path(js_worker_t *w) {
 
         /* Drive the event loop to resolve pending fetches */
         js_had_unhandled_rejection = 0;
-        int rc = js_loop_run(loop, rt);
+        int rc = js_loop_run(loop, JS_GetRuntime(ctx));
 
         JS_FreeValue(ctx, promise);
 
@@ -323,8 +319,7 @@ static void worker_js_path(js_worker_t *w) {
     JS_FreeValue(ctx, bench_export);
     JS_SetContextOpaque(ctx, NULL);
     js_loop_free(loop);
-    JS_FreeContext(ctx);
-    JS_FreeRuntime(rt);
+    js_vm_free(ctx);
     js_engine_destroy(engine);
 }
 

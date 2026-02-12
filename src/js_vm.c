@@ -52,20 +52,21 @@ static void js_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
     js_had_unhandled_rejection = 1;
 }
 
-/* ── Runtime / Context creation ───────────────────────────────────────── */
+/* ── Create / free ────────────────────────────────────────────────────── */
 
-JSRuntime *js_vm_rt_create(void) {
+JSContext *js_vm_create(void) {
     JSRuntime *rt = JS_NewRuntime();
     if (!rt) return NULL;
+
     JS_SetMaxStackSize(rt, 1024 * 1024);  /* 1MB stack */
     JS_SetMemoryLimit(rt, 128 * 1024 * 1024);  /* 128MB memory */
     JS_SetHostPromiseRejectionTracker(rt, js_promise_rejection_tracker, NULL);
-    return rt;
-}
 
-JSContext *js_vm_ctx_create(JSRuntime *rt) {
     JSContext *ctx = JS_NewContext(rt);
-    if (!ctx) return NULL;
+    if (!ctx) {
+        JS_FreeRuntime(rt);
+        return NULL;
+    }
 
     /* Enable ES module support */
     JS_SetModuleLoaderFunc(rt, NULL, NULL, NULL);
@@ -75,6 +76,12 @@ JSContext *js_vm_ctx_create(JSRuntime *rt) {
     js_fetch_init(ctx);
 
     return ctx;
+}
+
+void js_vm_free(JSContext *ctx) {
+    JSRuntime *rt = JS_GetRuntime(ctx);
+    JS_FreeContext(ctx);
+    JS_FreeRuntime(rt);
 }
 
 /* ── Module evaluation ────────────────────────────────────────────────── */

@@ -220,8 +220,8 @@ JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
 void    js_fetch_init(JSContext *ctx);
 
 /* vm.c */
-JSRuntime *js_vm_rt_create(void);
-JSContext  *js_vm_ctx_create(JSRuntime *rt);
+JSContext  *js_vm_create(void);
+void        js_vm_free(JSContext *ctx);
 int         js_vm_eval_module(JSContext *ctx, const char *filename,
                                const char *source, JSValue *default_export,
                                JSValue *bench_export);

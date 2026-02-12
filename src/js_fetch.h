@@ -6,4 +6,6 @@ JSValue js_headers_from_http(JSContext *ctx, const js_http_response_t *parsed);
 
 void    js_response_init(JSContext *ctx);
 
+void    js_fetch_init(JSContext *ctx);
+
 #endif /* JS_FETCH_H */

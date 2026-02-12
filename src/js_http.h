@@ -53,4 +53,10 @@ typedef struct {
     uint64_t            start_ns;
 } js_http_peer_t;
 
+void        js_http_response_init(js_http_response_t *r);
+void        js_http_response_free(js_http_response_t *r);
+void        js_http_response_reset(js_http_response_t *r);
+int         js_http_response_feed(js_http_response_t *r, const char *data, size_t len);
+const char *js_http_response_header(const js_http_response_t *r, const char *name);
+
 #endif /* JS_HTTP_H */

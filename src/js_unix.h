@@ -23,4 +23,11 @@
 #include <math.h>
 #include <time.h>
 
+
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include "list.h"
+#include "cutils.h"
+#include "quickjs.h"
+
 #endif /* JS_UNIX_H */

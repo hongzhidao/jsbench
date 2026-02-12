@@ -33,6 +33,9 @@ void    js_headers_init(JSContext *ctx);
 JSValue js_headers_from_http(JSContext *ctx, const js_http_response_t *parsed);
 
 void    js_response_init(JSContext *ctx);
+JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
+                        const char *body, size_t body_len,
+                        const js_http_response_t *parsed);
 
 void    js_fetch_init(JSContext *ctx);
 

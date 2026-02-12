@@ -23,7 +23,6 @@ js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
     }
 
     c->state = CONN_CONNECTING;
-    c->start_ns = js_now_ns();
 
     if (ssl_ctx) {
         c->ssl = js_tls_new(ssl_ctx, c->socket.fd, hostname);
@@ -168,7 +167,6 @@ void js_conn_reuse(js_conn_t *c) {
     js_buf_reset(&c->in);
     c->state = CONN_WRITING;
     c->out.pos = 0;
-    c->start_ns = js_now_ns();
 }
 
 void js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
@@ -204,7 +202,6 @@ void js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
 
     c->state = CONN_CONNECTING;
     c->out.pos = 0;
-    c->start_ns = js_now_ns();
 
     if (ssl_ctx) {
         c->ssl = js_tls_new(ssl_ctx, c->socket.fd, hostname);

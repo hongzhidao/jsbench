@@ -18,13 +18,14 @@ static bool worker_keepalive(js_http_response_t *r) {
 
 static void worker_conn_process(js_conn_t *c) {
     js_worker_t *w = c->udata;
-    js_http_response_t *r = c->socket.data;
+    js_http_peer_t *peer = c->socket.data;
+    js_http_response_t *r = &peer->response;
     js_config_t *cfg = w->config;
     js_engine_t *engine = w->engine;
 
     if (c->state == CONN_DONE) {
         /* Record stats */
-        uint64_t elapsed_ns = js_now_ns() - c->start_ns;
+        uint64_t elapsed_ns = js_now_ns() - peer->start_ns;
         double elapsed_us = (double)elapsed_ns / 1000.0;
 
         w->stats.requests++;
@@ -46,6 +47,7 @@ static void worker_conn_process(js_conn_t *c) {
             /* Reuse connection: reset parser, send next request */
             js_http_response_reset(r);
             js_conn_reuse(c);
+            peer->start_ns = js_now_ns();
             js_conn_set_output(c, cfg->requests[next_idx].data,
                                  cfg->requests[next_idx].len);
             js_epoll_mod(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
@@ -62,6 +64,7 @@ static void worker_conn_process(js_conn_t *c) {
                 return;
             }
 
+            peer->start_ns = js_now_ns();
             js_conn_set_output(c, cfg->requests[next_idx].data,
                                  cfg->requests[next_idx].len);
             js_epoll_add(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
@@ -87,6 +90,7 @@ static void worker_conn_process(js_conn_t *c) {
             return;
         }
 
+        peer->start_ns = js_now_ns();
         js_conn_set_output(c, cfg->requests[next_idx].data,
                              cfg->requests[next_idx].len);
         js_epoll_add(engine, &c->socket, EPOLLIN | EPOLLOUT | EPOLLET);
@@ -104,7 +108,8 @@ static void worker_conn_process(js_conn_t *c) {
 
 static void worker_on_read(js_event_t *ev) {
     js_conn_t *c = (js_conn_t *)ev;
-    js_http_response_t *r = c->socket.data;
+    js_http_peer_t *peer = c->socket.data;
+    js_http_response_t *r = &peer->response;
     int rc = js_conn_read(c);
 
     if (c->state == CONN_READING && c->in.len > 0) {
@@ -164,8 +169,8 @@ static void worker_c_path(js_worker_t *w) {
 
     /* Create connections */
     js_conn_t **conns = calloc((size_t)w->conn_count, sizeof(js_conn_t *));
-    js_http_response_t *responses = calloc((size_t)w->conn_count,
-                                            sizeof(js_http_response_t));
+    js_http_peer_t *peers = calloc((size_t)w->conn_count,
+                                    sizeof(js_http_peer_t));
     int active = 0;
 
     for (int i = 0; i < w->conn_count; i++) {
@@ -178,8 +183,9 @@ static void worker_c_path(js_worker_t *w) {
             continue;
         }
 
-        js_http_response_init(&responses[i]);
-        conns[i]->socket.data  = &responses[i];
+        js_http_response_init(&peers[i].response);
+        peers[i].start_ns = js_now_ns();
+        conns[i]->socket.data  = &peers[i];
         conns[i]->socket.read  = worker_on_read;
         conns[i]->socket.write = worker_on_write;
         conns[i]->socket.error = worker_on_error;
@@ -215,10 +221,10 @@ static void worker_c_path(js_worker_t *w) {
 
     /* Cleanup */
     for (int i = 0; i < w->conn_count; i++) {
-        js_http_response_free(&responses[i]);
+        js_http_response_free(&peers[i].response);
         if (conns[i]) js_conn_free(conns[i]);
     }
-    free(responses);
+    free(peers);
     free(conns);
     js_engine_destroy(engine);
 }

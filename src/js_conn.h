@@ -21,9 +21,6 @@ typedef struct js_conn {
     js_buf_t         out;
     js_buf_t         in;
 
-    /* Timing */
-    uint64_t         start_ns;
-
     /* For round-robin in array mode */
     int              req_index;
 

@@ -127,18 +127,11 @@ int js_vm_eval_module(JSContext *ctx, const char *filename,
     }
     JS_FreeValue(ctx, result);
 
-    /* Execute pending jobs (promises, top-level await, etc.) */
-    JSContext *pctx;
-    int job_ret;
-    for (;;) {
-        job_ret = JS_ExecutePendingJob(JS_GetRuntime(ctx), &pctx);
-        if (job_ret <= 0) break;
-    }
-    if (job_ret < 0) {
-        /* Consume the exception so it doesn't linger.
-         * The promise rejection tracker already printed the error. */
-        JSValue exc = JS_GetException(pctx);
-        JS_FreeValue(pctx, exc);
+    /* Drive the event loop to completion so that top-level await
+     * (e.g. await fetch()) resolves before we read exports. */
+    js_loop_t *loop = JS_GetContextOpaque(ctx);
+    if (loop) {
+        js_loop_run(loop, JS_GetRuntime(ctx));
     }
 
     /* Get module namespace and extract exports */

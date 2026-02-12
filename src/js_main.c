@@ -77,10 +77,7 @@ int main(int argc, char **argv) {
 
     int ret = 0;
 
-    if (mode == MODE_CLI) {
-        /* CLI mode: just run pending async jobs */
-        ret = js_cli_run(ctx, &config);
-    } else {
+    if (mode != MODE_CLI) {
         /* Benchmark mode: extract config and requests */
         js_vm_extract_config(ctx, bench_export, &config);
 

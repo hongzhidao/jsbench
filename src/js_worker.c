@@ -54,6 +54,7 @@ static void worker_conn_process(js_conn_t *c) {
         } else {
             /* Server closed: reconnect */
             js_epoll_del(engine, &c->socket);
+            js_http_response_reset(r);
             js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
                           cfg->use_tls ? cfg->ssl_ctx : NULL,
                           cfg->url.host);
@@ -80,6 +81,7 @@ static void worker_conn_process(js_conn_t *c) {
         js_epoll_del(engine, &c->socket);
 
         int next_idx = c->req_index;
+        js_http_response_reset(r);
         js_conn_reset(c, (struct sockaddr *)&cfg->addr, cfg->addr_len,
                       cfg->use_tls ? cfg->ssl_ctx : NULL,
                       cfg->url.host);

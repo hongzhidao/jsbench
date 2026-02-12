@@ -226,6 +226,7 @@ JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
                         const js_http_response_t *parsed);
 
 /* fetch.c */
+void    js_fetch_destroy(js_fetch_t *f);
 void    js_fetch_init(JSContext *ctx);
 
 /* vm.c */

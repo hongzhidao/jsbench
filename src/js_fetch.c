@@ -2,22 +2,14 @@
 
 /* TODO: use config->target as base URL for relative fetch() paths */
 
-/* ── Fetch timeout handler ────────────────────────────────────────────── */
+/* ── Fetch lifecycle ─────────────────────────────────────────────────── */
 
-static void js_fetch_timeout_handler(js_timer_t *timer, void *data) {
-    js_pending_t *p = data;
-    js_fetch_t *f = js_fetch_from_pending(p);
+void js_fetch_destroy(js_fetch_t *f) {
+    js_pending_t *p = &f->pending;
     JSContext *ctx = p->ctx;
 
-    JSValue err = JS_NewError(ctx);
-    JS_DefinePropertyValueStr(ctx, err, "message",
-                              JS_NewString(ctx, "Request timeout"),
-                              JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
-    JSValue ret = JS_Call(ctx, p->reject, JS_UNDEFINED, 1, &err);
-    JS_FreeValue(ctx, ret);
-    JS_FreeValue(ctx, err);
-
     js_epoll_del(js_thread()->engine, &f->conn->socket);
+    js_timer_delete(&js_thread()->engine->timers, &f->timer);
     JS_FreeValue(ctx, p->resolve);
     JS_FreeValue(ctx, p->reject);
     js_http_response_free(&f->response);
@@ -25,6 +17,106 @@ static void js_fetch_timeout_handler(js_timer_t *timer, void *data) {
     if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
     list_del(&p->link);
     free(f);
+}
+
+static void js_fetch_complete(js_fetch_t *f) {
+    js_pending_t *p = &f->pending;
+    js_http_response_t *r = &f->response;
+    JSContext *ctx = p->ctx;
+
+    JSValue response = js_response_new(ctx,
+        r->status_code, r->status_text,
+        r->body, r->body_len, r);
+
+    JSValue ret = JS_Call(ctx, p->resolve, JS_UNDEFINED, 1, &response);
+    JS_FreeValue(ctx, ret);
+    JS_FreeValue(ctx, response);
+
+    js_fetch_destroy(f);
+}
+
+static void js_fetch_fail(js_fetch_t *f, const char *message) {
+    js_pending_t *p = &f->pending;
+    JSContext *ctx = p->ctx;
+
+    JSValue err = JS_NewError(ctx);
+    JS_DefinePropertyValueStr(ctx, err, "message",
+                              JS_NewString(ctx, message),
+                              JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JSValue ret = JS_Call(ctx, p->reject, JS_UNDEFINED, 1, &err);
+    JS_FreeValue(ctx, ret);
+    JS_FreeValue(ctx, err);
+
+    js_fetch_destroy(f);
+}
+
+/* ── Connection event handlers ───────────────────────────────────────── */
+
+static void js_fetch_process(js_conn_t *c) {
+    js_fetch_t *f = c->socket.data;
+
+    if (c->state == CONN_DONE) {
+        js_fetch_complete(f);
+    } else if (c->state == CONN_ERROR) {
+        js_fetch_fail(f, "Connection error");
+    } else {
+        uint32_t mask = EPOLLET;
+        if (c->state == CONN_CONNECTING || c->state == CONN_WRITING ||
+            c->state == CONN_TLS_HANDSHAKE)
+            mask |= EPOLLOUT | EPOLLIN;
+        else
+            mask |= EPOLLIN;
+        js_epoll_mod(js_thread()->engine, &c->socket, mask);
+    }
+}
+
+static void js_fetch_on_read(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    js_fetch_t *f = c->socket.data;
+    js_http_response_t *r = &f->response;
+    int rc = js_conn_read(c);
+
+    if (c->state == CONN_READING && c->in.len > 0) {
+        int ret = js_http_response_feed(r, c->in.data, c->in.len);
+        js_buf_reset(&c->in);
+
+        if (ret == 1) {
+            c->state = CONN_DONE;
+        } else if (ret < 0) {
+            c->state = CONN_ERROR;
+        }
+    }
+
+    if (rc == 1 && c->state == CONN_READING) {
+        /* Peer closed before HTTP response complete */
+        if (r->state == HTTP_PARSE_BODY_IDENTITY ||
+            r->body_len > 0) {
+            c->state = CONN_DONE;
+        } else {
+            c->state = CONN_ERROR;
+        }
+    }
+
+    js_fetch_process(c);
+}
+
+static void js_fetch_on_write(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    js_conn_process_write(c);
+    js_fetch_process(c);
+}
+
+static void js_fetch_on_error(js_event_t *ev) {
+    js_conn_t *c = (js_conn_t *)ev;
+    c->state = CONN_ERROR;
+    js_fetch_process(c);
+}
+
+/* ── Fetch timeout handler ────────────────────────────────────────────── */
+
+static void js_fetch_timeout_handler(js_timer_t *timer, void *data) {
+    js_pending_t *p = data;
+    js_fetch_fail(js_fetch_from_pending(p), "Request timeout");
 }
 
 /* ── fetch() implementation ───────────────────────────────────────────── */
@@ -178,13 +270,16 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     }
 
     js_http_response_init(&f->response);
+    f->conn = conn;
     conn->socket.data = f;
+    conn->socket.read  = js_fetch_on_read;
+    conn->socket.write = js_fetch_on_write;
+    conn->socket.error = js_fetch_on_error;
 
     JSValue resolve_funcs[2];
     JSValue promise = JS_NewPromiseCapability(ctx, resolve_funcs);
 
     js_pending_t *p = &f->pending;
-    f->conn = conn;
     p->ssl_ctx = ssl_ctx;
     p->ctx = ctx;
     p->resolve = resolve_funcs[0];

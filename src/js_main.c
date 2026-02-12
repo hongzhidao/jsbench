@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     }
 
     /* Detect mode */
-    js_mode_t mode = js_vm_detect_mode(ctx, default_export);
+    js_mode_t mode = js_runtime_detect_mode(ctx, default_export);
 
     /* Build config */
     js_config_t config = {0};
@@ -79,11 +79,11 @@ int main(int argc, char **argv) {
 
     if (mode != MODE_CLI) {
         /* Benchmark mode: extract config and requests */
-        js_vm_extract_config(ctx, bench_export, &config);
+        js_runtime_extract_config(ctx, bench_export, &config);
 
         if (mode != MODE_BENCH_ASYNC) {
             /* Extract and serialize requests for C-path */
-            if (js_vm_extract_requests(ctx, default_export, &config) != 0) {
+            if (js_runtime_extract_requests(ctx, default_export, &config) != 0) {
                 fprintf(stderr, "Error: failed to extract request configuration\n");
                 ret = 1;
                 goto cleanup;

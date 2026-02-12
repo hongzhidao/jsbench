@@ -122,14 +122,6 @@ void        js_vm_free(JSContext *ctx);
 int         js_vm_eval_module(JSContext *ctx, const char *filename,
                                const char *source, JSValue *default_export,
                                JSValue *bench_export);
-int         js_vm_extract_config(JSContext *ctx, JSValue bench_export,
-                                  js_config_t *config);
-int         js_vm_extract_requests(JSContext *ctx, JSValue default_export,
-                                    js_config_t *config);
-js_mode_t  js_vm_detect_mode(JSContext *ctx, JSValue default_export);
-void        js_vm_setup_console(JSContext *ctx);
-
-/* vm.c */
 extern int js_had_unhandled_rejection;
 
 /* worker.c */

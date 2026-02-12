@@ -1,8 +1,10 @@
-# Expressing Understanding Through Structs
+# Code Runs, but Three Concepts Are Missing
 
-The code runs, tests pass, features work — but something feels off. This feeling has come up repeatedly in earlier articles: an HTTP parser embedded in the connection layer, two request types doing the same job, borrowed pointers with unclear lifetimes. Every time I dug deeper, the root cause was the same — **a concept that should exist in the code, but doesn't.**
+The code runs, tests pass, features work — but something feels off.
 
-This article is about how to find those missing concepts.
+Every time I get that feeling and dig deeper, the root cause is the same: **a domain concept that should exist in the code, but doesn't.** Not a missing feature — features all work. A missing concept — the code doesn't know what it's operating on.
+
+This article uses two examples to show how to find those missing concepts, and what happens to the code once you do.
 
 ## Who Uses conn
 
@@ -93,17 +95,17 @@ This is a substantial change. The details are covered in the next article.
 
 Code change: [3ec7f15](https://github.com/hongzhidao/jsbench/commit/3ec7f15)
 
-## Structs Are Expressions of Domain Understanding
+## Structs Aren't Storage Containers
 
-Looking back at both changes — introducing `js_http_peer_t` and introducing `js_fetch_t` — they do the same thing: **recognizing a domain concept that the code didn't express, and giving it a struct.**
+Both changes do the same thing: **recognizing a domain concept the code didn't express, and giving it a struct.**
 
-DDD (Domain-Driven Design) says: code should reflect your understanding of the problem domain. In C, this principle is especially direct — your understanding of the system ultimately manifests as `struct` definitions.
+- No "HTTP peer" → `start_ns` and `response` scattered across two places. `js_http_peer_t` gives them a home.
+- No "fetch operation" → conn, timer, response mixed into loop. `js_fetch_t` gives them a home.
+- No "thread context" → engine stored in both loop and worker. `js_thread_t` gives it a home.
 
-`start_ns` and `response` were scattered across two places because there was no concept of "HTTP peer." Once `js_http_peer_t` exists, they naturally fall into place. conn, timer, and response were mixed into loop's struct because there was no concept of "a fetch operation." Once `js_fetch_t` exists, they naturally fall into place. engine was stored in both loop and worker because there was no concept of "thread context." Once `js_thread_t` exists, it naturally falls into place.
+**Which struct a field belongs to reflects your understanding of "who owns what."** When the understanding is right, fields are in the right place. When it's missing, fields scatter to where they don't belong. DDD says code should reflect your understanding of the problem domain — in C, that understanding ultimately manifests as struct definitions.
 
-**Structs aren't storage containers — they're expressions of domain concepts.** Which struct a field belongs to reflects your understanding of "who owns what." When the understanding is right, fields are in the right place. When the understanding is wrong or missing, fields scatter to where they don't belong — exactly the problems we've been seeing.
-
-This also explains why AI doesn't tend to make these improvements proactively. AI writes code with the goal of "making it work," and it puts data wherever is most convenient — wherever it's needed. But "convenient" and "correct" aren't the same thing. Putting `start_ns` in conn is convenient, but not correct. Putting fetch allocation in loop is convenient, but not correct. **Identifying domain concepts, judging ownership, making structural decisions — that's human work.**
+This also explains why AI doesn't tend to make these improvements proactively. AI's goal is "making it work," putting data wherever is most convenient — wherever it's needed. But "convenient" and "correct" aren't the same thing. `start_ns` in conn is convenient, but not correct. Fetch allocation in loop is convenient, but not correct. **Identifying domain concepts, judging ownership, making structural decisions — that's human work.**
 
 ## Where the Difficulty Lies
 
@@ -111,29 +113,19 @@ It's easy to say — find the right model. It's hard to do.
 
 The difficulty is that "right" isn't obvious. `js_http_peer_t` looks simple in hindsight — response plus start_ns, of course they belong together. But before it existed, nobody felt that `start_ns` in conn was wrong. The code ran, tests passed, features worked. **The problem isn't "it's broken" — it's "not realizing it could be better."**
 
-Even harder is identifying the truly core models. `js_fetch_t` isn't just moving fields around — it redefines the boundary between fetch and loop, changes allocation strategy, reassigns timeout handling, reshapes function signatures. Introducing one struct triggers a cascade of changes. **A good model simplifies complexity; a bad model creates complexity.** The difference comes down to whether you truly understand the concept boundaries in your problem domain.
+Even harder is identifying the truly core models. `js_fetch_t` isn't just moving fields around — it redefines the boundary between fetch and loop, changes allocation strategy, reassigns timeout handling, reshapes function signatures. Introducing one struct triggers a cascade of changes. **A good model simplifies complexity; a bad model creates complexity.**
 
-There's no shortcut to developing this ability, but there are methods.
-
-**Practice.** Not just writing more code — but looking back at what you wrote. Is this struct really right? Do these fields really belong here? Every article in this series has been re-examining existing code. Refactoring isn't extra work done after the fact — it's the natural result of deepening understanding.
-
-**Study good work.** nginx's `ngx_connection_t` knows nothing about HTTP. The Linux kernel's `struct sock` knows nothing about TCP. In good codebases, struct definitions themselves serve as domain model documentation. Seeing how they draw concept boundaries is more instructive than any design patterns book.
-
-**Think more.** While writing code, pause and ask yourself: what is this thing? What does it own? Who does it belong to? These questions sound simple, but answering them seriously often reveals structural problems. Every change in this article started from such a simple question.
-
-The DDD literature is vast and full of concepts. But in C, the core fits in one sentence: **figure out what concepts exist in your problem domain, what each concept should own, and express it with a struct.**
+How to develop this sense? Study good code. nginx's `ngx_connection_t` knows nothing about HTTP. The Linux kernel's `struct sock` knows nothing about TCP. In good codebases, struct definitions themselves serve as domain model documentation. Seeing how they draw concept boundaries is more instructive than any design patterns book.
 
 ## One Takeaway
 
 If you take away just one thing from this article, let it be this question: **why is this field in this struct?**
 
-Next time you write or read code, look at a struct and ask yourself, field by field: does it describe the concept this struct represents? Or does it actually belong to something else and just happens to live here?
+Field by field, ask yourself: does it describe the concept this struct represents? Or does it actually belong to something else and just happens to live here? If the answer is the latter, either a concept is missing or the boundaries are wrong.
 
-If a struct has fields that don't belong to it, either a concept is missing — a new struct is needed — or the concept boundaries are wrong — they need to be redrawn.
+Earlier articles had a checklist: look at structs, look at functions, look at dependency direction. Add one more: **look at field ownership.**
 
-Earlier articles had a checklist: look at structs, look at functions, look at dependency direction. This article adds one more: **look at field ownership.** Every field should belong to the concept it lives in, no more, no less. Get that right, and module boundaries, function responsibilities, and code organization tend to fall into place on their own.
-
-The data structures are sorted out, but loop still has `loop_on_read` — reading data, feeding the HTTP parser, checking completion status — behavior that belongs to fetch. The next article enters the deep waters of JS: making `js_fetch_t` truly take over the responsibilities it should own.
+The data structures are sorted out, but loop still has `loop_on_read` — reading data, feeding the HTTP parser, checking completion status — behavior that belongs to fetch. Next article: making `js_fetch_t` truly take over the responsibilities it should own.
 
 ---
 

@@ -142,26 +142,17 @@ typedef struct js_loop js_loop_t;
 
 /* ── Pending operation (shared between loop and fetch) ───────────────── */
 
-typedef struct {
+typedef struct js_pending js_pending_t;
+
+struct js_pending {
     SSL_CTX             *ssl_ctx;
     JSContext           *ctx;
     JSValue              resolve;
     JSValue              reject;
     js_loop_t           *loop;
     struct list_head     link;
-} js_pending_t;
-
-/* ── Fetch context: what conn->socket.data points to ─────────────────── */
-
-typedef struct {
-    js_http_response_t   response;
-    js_pending_t         pending;
-    js_conn_t           *conn;
-    js_timer_t           timer;
-} js_fetch_t;
-
-#define js_fetch_from_pending(p) \
-    js_container_of(p, js_fetch_t, pending)
+    void               (*destroy)(js_pending_t *p);
+};
 
 /* ── Function declarations ────────────────────────────────────────────── */
 
@@ -226,7 +217,6 @@ JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
                         const js_http_response_t *parsed);
 
 /* fetch.c */
-void    js_fetch_destroy(js_fetch_t *f);
 void    js_fetch_init(JSContext *ctx);
 
 /* vm.c */

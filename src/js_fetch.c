@@ -2,10 +2,20 @@
 
 /* TODO: use config->target as base URL for relative fetch() paths */
 
+typedef struct {
+    js_http_response_t   response;
+    js_pending_t         pending;
+    js_conn_t           *conn;
+    js_timer_t           timer;
+} js_fetch_t;
+
+#define js_fetch_from_pending(p) \
+    js_container_of(p, js_fetch_t, pending)
+
 /* ── Fetch lifecycle ─────────────────────────────────────────────────── */
 
-void js_fetch_destroy(js_fetch_t *f) {
-    js_pending_t *p = &f->pending;
+static void js_fetch_destroy(js_pending_t *p) {
+    js_fetch_t *f = js_fetch_from_pending(p);
     JSContext *ctx = p->ctx;
 
     js_epoll_del(js_thread()->engine, &f->conn->socket);
@@ -32,7 +42,7 @@ static void js_fetch_complete(js_fetch_t *f) {
     JS_FreeValue(ctx, ret);
     JS_FreeValue(ctx, response);
 
-    js_fetch_destroy(f);
+    js_fetch_destroy(p);
 }
 
 static void js_fetch_fail(js_fetch_t *f, const char *message) {
@@ -47,7 +57,7 @@ static void js_fetch_fail(js_fetch_t *f, const char *message) {
     JS_FreeValue(ctx, ret);
     JS_FreeValue(ctx, err);
 
-    js_fetch_destroy(f);
+    js_fetch_destroy(p);
 }
 
 /* ── Connection event handlers ───────────────────────────────────────── */
@@ -284,6 +294,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     p->ctx = ctx;
     p->resolve = resolve_funcs[0];
     p->reject = resolve_funcs[1];
+    p->destroy = js_fetch_destroy;
 
     f->timer.handler = js_fetch_timeout_handler;
     f->timer.data = p;
@@ -292,6 +303,7 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     engine->timers.now = (js_msec_t)(js_now_ns() / 1000000);
     js_timer_add(&engine->timers, &f->timer, 30 * 1000);
 
+    js_epoll_add(engine, &conn->socket, EPOLLIN | EPOLLOUT | EPOLLET);
     js_loop_add(loop, p);
 
     JS_FreeCString(ctx, url_str);

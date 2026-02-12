@@ -235,13 +235,9 @@ void        js_vm_setup_console(JSContext *ctx);
 /* vm.c */
 extern int js_had_unhandled_rejection;
 
-/* cli.c */
-int     js_cli_run(JSContext *ctx, js_config_t *config);
-
 /* worker.c */
 void   *js_worker_run(void *arg);
 
-/* bench.c */
-int     js_bench_run(js_config_t *config);
+#include "js_runtime.h"
 
 #endif /* JS_H */

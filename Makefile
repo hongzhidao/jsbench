@@ -10,7 +10,7 @@ QJS_LIB     := $(QJS_DIR)/libquickjs.a
 
 SRCS := src/js_main.c src/js_time.c src/js_rbtree.c src/js_timer.c src/js_engine.c src/js_util.c src/js_stats.c src/js_http_parser.c \
         src/js_tls.c src/js_epoll.c src/js_conn.c src/js_headers.c src/js_response.c src/js_fetch.c \
-        src/js_loop.c src/js_vm.c src/js_cli.c src/js_worker.c src/js_bench.c
+        src/js_loop.c src/js_vm.c src/js_runtime.c src/js_worker.c
 OBJS := $(patsubst src/%.c,build/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 

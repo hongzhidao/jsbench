@@ -28,6 +28,15 @@ typedef struct js_conn {
     void            *udata;
 } js_conn_t;
 
-int js_conn_read(js_conn_t *c);
+js_conn_t *js_conn_create(const struct sockaddr *addr, socklen_t addr_len,
+                             SSL_CTX *ssl_ctx, const char *hostname);
+void        js_conn_free(js_conn_t *c);
+int         js_conn_set_output(js_conn_t *c, const char *data, size_t len);
+void        js_conn_reset(js_conn_t *c, const struct sockaddr *addr,
+                           socklen_t addr_len, SSL_CTX *ssl_ctx,
+                           const char *hostname);
+void        js_conn_reuse(js_conn_t *c);
+void        js_conn_write(js_conn_t *c);
+int         js_conn_read(js_conn_t *c);
 
 #endif /* JS_CONN_H */

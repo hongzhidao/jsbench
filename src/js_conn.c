@@ -114,7 +114,7 @@ static int conn_do_read(js_conn_t *c) {
     }
 }
 
-void js_conn_process_write(js_conn_t *c) {
+void js_conn_write(js_conn_t *c) {
     switch (c->state) {
         case CONN_CONNECTING: {
             int err = 0;

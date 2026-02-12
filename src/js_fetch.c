@@ -114,7 +114,7 @@ static void js_fetch_on_read(js_event_t *ev) {
 
 static void js_fetch_on_write(js_event_t *ev) {
     js_conn_t *c = (js_conn_t *)ev;
-    js_conn_process_write(c);
+    js_conn_write(c);
     js_fetch_process(c);
 }
 

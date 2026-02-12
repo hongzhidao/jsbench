@@ -3,6 +3,8 @@
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include "list.h"
+#include "cutils.h"
 #include "quickjs.h"
 
 #include "js_unix.h"
@@ -16,8 +18,7 @@
 #include "js_buf.h"
 #include "js_conn.h"
 #include "js_http.h"
-#include "cutils.h"
-#include "list.h"
+#include "js_fetch.h"
 
 /* ── Constants ────────────────────────────────────────────────────────── */
 
@@ -219,11 +220,13 @@ void        js_loop_free(js_loop_t *loop);
 int         js_loop_add(js_loop_t *loop, js_pending_t *p);
 int         js_loop_run(js_loop_t *loop, JSRuntime *rt);
 
-/* fetch.c */
-void    js_fetch_init(JSContext *ctx);
+/* response.c */
 JSValue js_response_new(JSContext *ctx, int status, const char *status_text,
                         const char *body, size_t body_len,
                         const js_http_response_t *parsed);
+
+/* fetch.c */
+void    js_fetch_init(JSContext *ctx);
 
 /* vm.c */
 JSRuntime *js_vm_rt_create(void);

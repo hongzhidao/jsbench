@@ -7,6 +7,10 @@ typedef struct {
     js_pending_t         pending;
     js_conn_t           *conn;
     js_timer_t           timer;
+    SSL_CTX             *ssl_ctx;
+    JSContext           *ctx;
+    JSValue              resolve;
+    JSValue              reject;
 } js_fetch_t;
 
 #define js_fetch_from_pending(p) \
@@ -16,48 +20,46 @@ typedef struct {
 
 static void js_fetch_destroy(js_pending_t *p) {
     js_fetch_t *f = js_fetch_from_pending(p);
-    JSContext *ctx = p->ctx;
+    JSContext *ctx = f->ctx;
 
     js_epoll_del(js_thread()->engine, &f->conn->socket);
     js_timer_delete(&js_thread()->engine->timers, &f->timer);
-    JS_FreeValue(ctx, p->resolve);
-    JS_FreeValue(ctx, p->reject);
+    JS_FreeValue(ctx, f->resolve);
+    JS_FreeValue(ctx, f->reject);
     js_http_response_free(&f->response);
     js_conn_free(f->conn);
-    if (p->ssl_ctx) SSL_CTX_free(p->ssl_ctx);
+    if (f->ssl_ctx) SSL_CTX_free(f->ssl_ctx);
     list_del(&p->link);
     free(f);
 }
 
 static void js_fetch_complete(js_fetch_t *f) {
-    js_pending_t *p = &f->pending;
     js_http_response_t *r = &f->response;
-    JSContext *ctx = p->ctx;
+    JSContext *ctx = f->ctx;
 
     JSValue response = js_response_new(ctx,
         r->status_code, r->status_text,
         r->body, r->body_len, r);
 
-    JSValue ret = JS_Call(ctx, p->resolve, JS_UNDEFINED, 1, &response);
+    JSValue ret = JS_Call(ctx, f->resolve, JS_UNDEFINED, 1, &response);
     JS_FreeValue(ctx, ret);
     JS_FreeValue(ctx, response);
 
-    js_fetch_destroy(p);
+    js_fetch_destroy(&f->pending);
 }
 
 static void js_fetch_fail(js_fetch_t *f, const char *message) {
-    js_pending_t *p = &f->pending;
-    JSContext *ctx = p->ctx;
+    JSContext *ctx = f->ctx;
 
     JSValue err = JS_NewError(ctx);
     JS_DefinePropertyValueStr(ctx, err, "message",
                               JS_NewString(ctx, message),
                               JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
-    JSValue ret = JS_Call(ctx, p->reject, JS_UNDEFINED, 1, &err);
+    JSValue ret = JS_Call(ctx, f->reject, JS_UNDEFINED, 1, &err);
     JS_FreeValue(ctx, ret);
     JS_FreeValue(ctx, err);
 
-    js_fetch_destroy(p);
+    js_fetch_destroy(&f->pending);
 }
 
 /* ── Connection event handlers ───────────────────────────────────────── */
@@ -125,8 +127,7 @@ static void js_fetch_on_error(js_event_t *ev) {
 /* ── Fetch timeout handler ────────────────────────────────────────────── */
 
 static void js_fetch_timeout_handler(js_timer_t *timer, void *data) {
-    js_pending_t *p = data;
-    js_fetch_fail(js_fetch_from_pending(p), "Request timeout");
+    js_fetch_fail(data, "Request timeout");
 }
 
 /* ── fetch() implementation ───────────────────────────────────────────── */
@@ -289,15 +290,16 @@ static JSValue js_fetch(JSContext *ctx, JSValueConst this_val,
     JSValue resolve_funcs[2];
     JSValue promise = JS_NewPromiseCapability(ctx, resolve_funcs);
 
+    f->ssl_ctx = ssl_ctx;
+    f->ctx = ctx;
+    f->resolve = resolve_funcs[0];
+    f->reject = resolve_funcs[1];
+
     js_pending_t *p = &f->pending;
-    p->ssl_ctx = ssl_ctx;
-    p->ctx = ctx;
-    p->resolve = resolve_funcs[0];
-    p->reject = resolve_funcs[1];
     p->destroy = js_fetch_destroy;
 
     f->timer.handler = js_fetch_timeout_handler;
-    f->timer.data = p;
+    f->timer.data = f;
 
     js_engine_t *engine = js_thread()->engine;
     engine->timers.now = (js_msec_t)(js_now_ns() / 1000000);

@@ -140,15 +140,11 @@ typedef struct {
 
 typedef struct js_loop js_loop_t;
 
-/* ── Pending operation (shared between loop and fetch) ───────────────── */
+/* ── Pending operation (generic event loop node) ─────────────────────── */
 
 typedef struct js_pending js_pending_t;
 
 struct js_pending {
-    SSL_CTX             *ssl_ctx;
-    JSContext           *ctx;
-    JSValue              resolve;
-    JSValue              reject;
     js_loop_t           *loop;
     struct list_head     link;
     void               (*destroy)(js_pending_t *p);
